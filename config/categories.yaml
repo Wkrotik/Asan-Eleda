@@ -1,0 +1,39 @@
+# Placeholder taxonomy (replace when official ASAN taxonomy is available)
+version: 1
+categories:
+  - id: roads_potholes
+    label: Roads and potholes
+    synonyms: [pothole, road damage, asphalt]
+  - id: waste
+    label: Waste and cleanliness
+    synonyms: [trash, garbage, litter, dumping]
+  - id: street_lighting
+    label: Street lighting
+    synonyms: [lamp, streetlight]
+  - id: water_sewage
+    label: Water and sewage
+    synonyms: [pipe leak, flooding, sewer]
+  - id: electricity
+    label: Electricity
+    synonyms: [power line, outage]
+  - id: gas
+    label: Gas
+    synonyms: [gas leak]
+  - id: greenery
+    label: Greenery and trees
+    synonyms: [tree, grass, pruning]
+  - id: sidewalks
+    label: Sidewalks and pedestrian access
+    synonyms: [curb, pavement]
+  - id: signage
+    label: Signs and markings
+    synonyms: [road sign, crosswalk]
+  - id: parking
+    label: Parking and vehicles
+    synonyms: [illegal parking, blocking]
+  - id: animals
+    label: Animals
+    synonyms: [stray, dog]
+  - id: other
+    label: Other
+    synonyms: []

@@ -1,0 +1,13 @@
+# Priority is rules-first for MVP.
+version: 1
+levels: [low, medium, high]
+rules:
+  - id: safety_keywords
+    description: Increase priority when safety-related concepts detected.
+    level: high
+    keywords: [fire, smoke, crash, accident, fallen, exposed wire, flood]
+  - id: service_interruption
+    description: Medium priority for service interruption signals.
+    level: medium
+    keywords: [outage, no water, no power, blocked]
+default_level: low

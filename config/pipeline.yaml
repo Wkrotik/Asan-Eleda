@@ -1,0 +1,15 @@
+version: 1
+engines:
+  media_ingestor: mock
+  captioner: mock
+  ocr: mock
+  embedder: mock
+  categorizer: mock
+  prioritizer: rules_v1
+  verifier: mock
+storage:
+  type: local
+  uploads_dir: data/uploads
+  artifacts_dir: data/artifacts
+api:
+  category_top_k: 3

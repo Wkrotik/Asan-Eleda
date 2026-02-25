@@ -1,0 +1,8 @@
+version: 1
+verify:
+  same_location:
+    match_threshold: 0.75
+    warn_threshold: 0.60
+  resolved:
+    resolved_threshold: 0.70
+    warn_threshold: 0.50
