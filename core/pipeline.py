@@ -177,7 +177,7 @@ class Pipeline:
                 "payload": {
                     "frames_used": len(media_refs),
                     "best_frame_for": best_frame_for,
-                    "per_frame": per_frame if len(media_refs) > 1 else [],
+                    "per_frame": per_frame,
                 },
             }
         )
