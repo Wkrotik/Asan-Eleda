@@ -18,6 +18,7 @@ from core.engines.mock import MockCaptioner, MockCategorizer, MockEmbedder, Mock
 from core.engines.captioning import BlipCaptioner
 from core.engines.ocr import EasyOcrV1
 from core.engines.openclip_engines import OpenClipSimilarityVerifier, OpenClipZeroShotCategorizer
+from core.engines.verify_hybrid import HybridVerifierV1
 from core.priority import RulesPrioritizerV1
 from core.storage import LocalStorage
 from core.video import extract_keyframes_ffmpeg, is_video_path
@@ -70,6 +71,9 @@ class Pipeline:
                 self.categorizer = OpenClipZeroShotCategorizer()
             if verifier_kind == "openclip_similarity":
                 self.verifier = OpenClipSimilarityVerifier()
+
+        if verifier_kind == "hybrid_v1":
+            self.verifier = HybridVerifierV1()
 
         self.prioritizer = RulesPrioritizerV1(self.priority_rules_cfg.raw)
 
@@ -199,7 +203,13 @@ class Pipeline:
                 )
 
         same_score, same_rationale = self.verifier.same_location(before=b_ref, after=a_ref)
-        res_score, res_rationale = self.verifier.resolved(same_location_score=same_score)
+        # Some verifiers use before/after for resolution heuristics.
+        # Keep compatibility with verifiers that only accept same_location_score.
+        resolved_fn = getattr(self.verifier, "resolved")
+        try:
+            res_score, res_rationale = resolved_fn(same_location_score=same_score, before=b_ref, after=a_ref)
+        except TypeError:
+            res_score, res_rationale = resolved_fn(same_location_score=same_score)
 
         th = self.thresholds_cfg.raw.get("verify") or {}
         same_th = (th.get("same_location") or {})

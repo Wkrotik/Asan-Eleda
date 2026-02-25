@@ -6,7 +6,7 @@ engines:
   embedder: openclip_vitb32
   categorizer: openclip_zeroshot
   prioritizer: rules_v1
-  verifier: openclip_similarity
+  verifier: hybrid_v1
 storage:
   type: local
   uploads_dir: data/uploads
