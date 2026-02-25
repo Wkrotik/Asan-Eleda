@@ -167,7 +167,7 @@ pip install -r requirements-ml.txt
 If you want to prefetch model weights (helpful for offline demos):
 
 ```bash
-python scripts/warmup_openclip.py
+python scripts/warmup_all.py
 ```
 
 ## Delivery / Packaging

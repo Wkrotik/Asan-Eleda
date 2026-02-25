@@ -15,9 +15,12 @@ from core.config import (
     load_thresholds_config,
 )
 from core.engines.mock import MockCaptioner, MockCategorizer, MockEmbedder, MockOcr, MockVerifier
+from core.engines.captioning import BlipCaptioner
+from core.engines.ocr import EasyOcrV1
 from core.engines.openclip_engines import OpenClipSimilarityVerifier, OpenClipZeroShotCategorizer
 from core.priority import RulesPrioritizerV1
 from core.storage import LocalStorage
+from core.video import extract_keyframes_ffmpeg, is_video_path
 
 
 class Pipeline:
@@ -36,8 +39,22 @@ class Pipeline:
         # Engines (MVP default is mock; can be swapped by config/pipeline.yaml)
         engines = self.pipeline_cfg.engines
 
+        captioner_kind = engines.get("captioner", "mock")
+        ocr_kind = engines.get("ocr", "mock")
+
         self.captioner = MockCaptioner()
+        if captioner_kind == "blip_base":
+            cache_dir = str(self.pipeline_cfg.storage.model_cache_dir) if self.pipeline_cfg.storage.model_cache_dir else None
+            model_id = str(self.pipeline_cfg.captioning.get("model_id", "Salesforce/blip-image-captioning-base"))
+            max_new_tokens = int(self.pipeline_cfg.captioning.get("max_new_tokens", 40))
+            self.captioner = BlipCaptioner(model_id=model_id, max_new_tokens=max_new_tokens, cache_dir=cache_dir)
+
         self.ocr = MockOcr()
+        if ocr_kind == "easyocr_v1":
+            langs = list(self.pipeline_cfg.ocr.get("languages") or ["en"])
+            gpu = bool(self.pipeline_cfg.ocr.get("gpu", True))
+            cache_dir = str(self.pipeline_cfg.storage.model_cache_dir) if self.pipeline_cfg.storage.model_cache_dir else None
+            self.ocr = EasyOcrV1(languages=[str(x) for x in langs], gpu=gpu, model_storage_directory=cache_dir)
 
         embedder_kind = engines.get("embedder", "mock")
         categorizer_kind = engines.get("categorizer", "mock")
@@ -60,11 +77,58 @@ class Pipeline:
         request_id = uuid.uuid4().hex
         stored = await self.storage.save_upload(request_id=request_id, field="media", upload=upload)
 
-        description, tags = self.captioner.caption(media=stored)
-        ocr_items = self.ocr.extract(media=stored)
+        # Video support (MVP): extract a small number of frames and aggregate.
+        media_refs = [stored]
+        if stored.content_type and stored.content_type.startswith("video/"):
+            frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "frames"
+            fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
+            max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
+            extracted = extract_keyframes_ffmpeg(video_path=stored.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            media_refs = [
+                stored.__class__(
+                    path=f,
+                    sha256=stored.sha256,
+                    original_filename=stored.original_filename,
+                    content_type="image/jpeg",
+                    size_bytes=f.stat().st_size,
+                )
+                for f in extracted.frames
+            ]
+        elif is_video_path(stored.path):
+            # Fallback for unknown content_type.
+            frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "frames"
+            fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
+            max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
+            extracted = extract_keyframes_ffmpeg(video_path=stored.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            media_refs = [
+                stored.__class__(
+                    path=f,
+                    sha256=stored.sha256,
+                    original_filename=stored.original_filename,
+                    content_type="image/jpeg",
+                    size_bytes=f.stat().st_size,
+                )
+                for f in extracted.frames
+            ]
+
+        # Use first frame for caption; aggregate categories by max confidence.
+        description, tags = self.captioner.caption(media=media_refs[0])
+
+        ocr_items: list[dict] = []
+        # OCR only on first frame for now (keeps it fast).
+        ocr_items = self.ocr.extract(media=media_refs[0])
 
         top_k = self.pipeline_cfg.api.category_top_k
-        cats = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, media=stored)
+        # Aggregate category predictions across frames by max confidence per id.
+        pooled: dict[str, dict] = {}
+        for m in media_refs:
+            preds = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, media=m)
+            for p in preds:
+                cid = p["id"]
+                cur = pooled.get(cid)
+                if cur is None or float(p["confidence"]) > float(cur["confidence"]):
+                    pooled[cid] = p
+        cats = sorted(pooled.values(), key=lambda x: float(x["confidence"]), reverse=True)[:top_k]
 
         pr = self.prioritizer.suggest(tags=tags, text=description)
 
@@ -75,6 +139,9 @@ class Pipeline:
                 message="Category taxonomy is a placeholder; replace config/categories.yaml with official taxonomy when available.",
             )
         )
+
+        if stored.content_type and stored.content_type.startswith("video/"):
+            warnings.append(Warning(code="video_frame_sampling", message="Video analyzed via sampled keyframes (MVP)."))
 
         return AnalyzeResponse(
             request_id=request_id,
@@ -97,7 +164,41 @@ class Pipeline:
         b = await self.storage.save_upload(request_id=request_id, field="before", upload=before)
         a = await self.storage.save_upload(request_id=request_id, field="after", upload=after)
 
-        same_score, same_rationale = self.verifier.same_location(before=b, after=a)
+        # If videos: compare representative frames (first extracted frame) for MVP.
+        b_ref = b
+        a_ref = a
+
+        if (b.content_type and b.content_type.startswith("video/")) or is_video_path(b.path):
+            frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "before_frames"
+            fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
+            max_frames = 1
+            extracted = extract_keyframes_ffmpeg(video_path=b.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            if extracted.frames:
+                f = extracted.frames[0]
+                b_ref = b.__class__(
+                    path=f,
+                    sha256=b.sha256,
+                    original_filename=b.original_filename,
+                    content_type="image/jpeg",
+                    size_bytes=f.stat().st_size,
+                )
+
+        if (a.content_type and a.content_type.startswith("video/")) or is_video_path(a.path):
+            frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "after_frames"
+            fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
+            max_frames = 1
+            extracted = extract_keyframes_ffmpeg(video_path=a.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            if extracted.frames:
+                f = extracted.frames[0]
+                a_ref = a.__class__(
+                    path=f,
+                    sha256=a.sha256,
+                    original_filename=a.original_filename,
+                    content_type="image/jpeg",
+                    size_bytes=f.stat().st_size,
+                )
+
+        same_score, same_rationale = self.verifier.same_location(before=b_ref, after=a_ref)
         res_score, res_rationale = self.verifier.resolved(same_location_score=same_score)
 
         th = self.thresholds_cfg.raw.get("verify") or {}
@@ -114,6 +215,9 @@ class Pipeline:
             warnings.append(Warning(code="low_location_confidence", message="Low confidence that before/after are same location."))
         if res_score < res_warn:
             warnings.append(Warning(code="low_resolution_confidence", message="Low confidence that issue is resolved."))
+
+        if (b.content_type and b.content_type.startswith("video/")) or (a.content_type and a.content_type.startswith("video/")):
+            warnings.append(Warning(code="video_frame_sampling", message="Video verification uses representative keyframes (MVP)."))
 
         same_decision = "match" if same_score >= same_match else ("needs_review" if same_score >= same_warn else "mismatch")
         res_decision = "match" if res_score >= res_ok else ("needs_review" if res_score >= res_warn else "mismatch")

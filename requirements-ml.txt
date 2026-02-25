@@ -13,3 +13,10 @@ torchvision==0.21.0
 
 open-clip-torch==2.32.0
 Pillow==11.1.0
+
+# Captioning + OCR (offline)
+transformers==4.48.3
+sentencepiece==0.2.1
+
+easyocr==1.7.2
+opencv-python==4.11.0.86
