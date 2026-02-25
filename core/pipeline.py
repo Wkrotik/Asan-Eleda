@@ -204,47 +204,83 @@ class Pipeline:
         b = await self.storage.save_upload(request_id=request_id, field="before", upload=before)
         a = await self.storage.save_upload(request_id=request_id, field="after", upload=after)
 
-        # If videos: compare representative frames (first extracted frame) for MVP.
-        b_ref: MediaRef = b
-        a_ref: MediaRef = a
+        # Video support: extract multiple frames and search for best-matching pair.
+        b_refs: list[MediaRef] = [b]
+        a_refs: list[MediaRef] = [a]
 
-        if (b.content_type and b.content_type.startswith("video/")) or is_video_path(b.path):
+        # Verification can tolerate a bit more compute; defaults are conservative.
+        fps = float(self.pipeline_cfg.media.get("video_fps_verify", self.pipeline_cfg.media.get("video_fps", 0.5)))
+        max_frames = int(self.pipeline_cfg.media.get("max_video_frames_verify", self.pipeline_cfg.media.get("max_video_frames", 8)))
+        max_frames = max(1, min(max_frames, 24))
+
+        b_is_video = (b.content_type and b.content_type.startswith("video/")) or is_video_path(b.path)
+        a_is_video = (a.content_type and a.content_type.startswith("video/")) or is_video_path(a.path)
+
+        if b_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "before_frames"
-            fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
-            max_frames = 1
             extracted = extract_keyframes_ffmpeg(video_path=b.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
             if extracted.frames:
-                f = extracted.frames[0]
-                b_ref = MediaRef(
-                    path=f,
-                    sha256=b.sha256,
-                    original_filename=b.original_filename,
-                    content_type="image/jpeg",
-                    size_bytes=f.stat().st_size,
-                )
+                b_refs = [
+                    MediaRef(
+                        path=f,
+                        sha256=b.sha256,
+                        original_filename=b.original_filename,
+                        content_type="image/jpeg",
+                        size_bytes=f.stat().st_size,
+                    )
+                    for f in extracted.frames
+                ]
 
-        if (a.content_type and a.content_type.startswith("video/")) or is_video_path(a.path):
+        if a_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "after_frames"
-            fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
-            max_frames = 1
             extracted = extract_keyframes_ffmpeg(video_path=a.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
             if extracted.frames:
-                f = extracted.frames[0]
-                a_ref = MediaRef(
-                    path=f,
-                    sha256=a.sha256,
-                    original_filename=a.original_filename,
-                    content_type="image/jpeg",
-                    size_bytes=f.stat().st_size,
-                )
+                a_refs = [
+                    MediaRef(
+                        path=f,
+                        sha256=a.sha256,
+                        original_filename=a.original_filename,
+                        content_type="image/jpeg",
+                        size_bytes=f.stat().st_size,
+                    )
+                    for f in extracted.frames
+                ]
 
         # same_location may return (score, rationale) or (score, rationale, evidence)
-        same_ev = None
-        same_out = self.verifier.same_location(before=b_ref, after=a_ref)
-        if isinstance(same_out, tuple) and len(same_out) == 3:
-            same_score, same_rationale, same_ev = same_out  # type: ignore[misc]
-        else:
-            same_score, same_rationale = same_out  # type: ignore[misc]
+        best_same_score = -1.0
+        best_same_rationale = ""
+        best_same_ev = None
+        best_pair = (0, 0)
+
+        pair_scores: list[dict] = []
+        for bi, b_ref in enumerate(b_refs):
+            for ai, a_ref in enumerate(a_refs):
+                same_ev = None
+                same_out = self.verifier.same_location(before=b_ref, after=a_ref)
+                if isinstance(same_out, tuple) and len(same_out) == 3:
+                    same_score, same_rationale, same_ev = same_out  # type: ignore[misc]
+                else:
+                    same_score, same_rationale = same_out  # type: ignore[misc]
+
+                pair_scores.append(
+                    {
+                        "before_index": bi,
+                        "after_index": ai,
+                        "score": float(same_score),
+                    }
+                )
+                if float(same_score) > best_same_score:
+                    best_same_score = float(same_score)
+                    best_same_rationale = str(same_rationale)
+                    best_same_ev = same_ev
+                    best_pair = (bi, ai)
+
+        # Choose the best-matching pair for downstream resolved heuristics.
+        b_ref = b_refs[best_pair[0]]
+        a_ref = a_refs[best_pair[1]]
+        same_score = max(0.0, min(1.0, float(best_same_score)))
+        same_rationale = best_same_rationale or "Same-location score computed from best frame pair."
+        same_ev = best_same_ev
 
         # Some verifiers use before/after for resolution heuristics.
         # Keep compatibility with verifiers that only accept same_location_score.
@@ -277,15 +313,46 @@ class Pipeline:
             warnings.append(Warning(code="low_resolution_confidence", message="Low confidence that issue is resolved."))
 
         if (b.content_type and b.content_type.startswith("video/")) or (a.content_type and a.content_type.startswith("video/")):
-            warnings.append(Warning(code="video_frame_sampling", message="Video verification uses representative keyframes (MVP)."))
+            warnings.append(Warning(code="video_frame_sampling", message="Video verification uses sampled keyframes (MVP)."))
+
+        if len(b_refs) * len(a_refs) > 1 and same_score < same_warn:
+            warnings.append(
+                Warning(
+                    code="video_no_strong_match",
+                    message="No evaluated frame pair reached same-location warning threshold; result likely needs review.",
+                )
+            )
 
         evidence: list[dict] = []
+        # Keep evidence bounded: include basic stats and top pairs.
+        pair_scores_sorted = sorted(pair_scores, key=lambda x: float(x.get("score", 0.0)), reverse=True)
+        top_pairs = pair_scores_sorted[: min(6, len(pair_scores_sorted))]
+        stats = None
+        if pair_scores_sorted:
+            scores = [float(x["score"]) for x in pair_scores_sorted]
+            stats = {
+                "count": len(scores),
+                "max": max(scores),
+                "min": min(scores),
+                "mean": sum(scores) / float(len(scores)),
+            }
+
         evidence.append(
             {
                 "type": "verify_signals",
                 "payload": {
                     "same_location": same_ev,
                     "resolved": res_ev,
+                    "pair_search": {
+                        "before_frames": [str(x.path) for x in b_refs] if len(b_refs) > 1 else [],
+                        "after_frames": [str(x.path) for x in a_refs] if len(a_refs) > 1 else [],
+                        "evaluated_pairs": len(pair_scores),
+                        "best_pair": {"before_index": best_pair[0], "after_index": best_pair[1], "score": same_score},
+                        "top_pairs": top_pairs,
+                        "stats": stats,
+                        "fps": fps if (b_is_video or a_is_video) else None,
+                        "max_frames": max_frames if (b_is_video or a_is_video) else None,
+                    },
                     "thresholds": {
                         "same_location": {"match": same_match, "warn": same_warn},
                         "resolved": {"resolved": res_ok, "warn": res_warn},
