@@ -33,9 +33,17 @@ class Pipeline:
         self.priority_rules_cfg = load_priority_rules_config()
 
         # Storage
+        max_mb = self.pipeline_cfg.api.raw.get("max_upload_mb")
+        max_upload_bytes = None
+        if max_mb is not None:
+            try:
+                max_upload_bytes = int(float(max_mb) * 1024 * 1024)
+            except Exception:
+                max_upload_bytes = None
         self.storage = LocalStorage(
             uploads_dir=self.pipeline_cfg.storage.uploads_dir,
             artifacts_dir=self.pipeline_cfg.storage.artifacts_dir,
+            max_upload_bytes=max_upload_bytes,
         )
 
         # Engines (MVP default is mock; can be swapped by config/pipeline.yaml)

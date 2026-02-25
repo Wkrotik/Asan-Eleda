@@ -1,0 +1,2 @@
+{"type":"analyze","media":"challange-rules/purple logo asan m.png"}
+{"type":"verify","before":"challange-rules/purple logo asan m.png","after":"challange-rules/purple logo asan m.png","expect_same_location":true,"expect_resolved":true}

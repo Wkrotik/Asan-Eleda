@@ -30,6 +30,7 @@ class StorageConfig:
 @dataclass(frozen=True)
 class ApiConfig:
     category_top_k: int
+    raw: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ def load_pipeline_config() -> PipelineConfig:
             artifacts_dir=ROOT / str(storage.get("artifacts_dir", "data/artifacts")),
             model_cache_dir=(ROOT / str(storage.get("model_cache_dir"))) if storage.get("model_cache_dir") else None,
         ),
-        api=ApiConfig(category_top_k=int(api.get("category_top_k", 3))),
+        api=ApiConfig(category_top_k=int(api.get("category_top_k", 3)), raw=dict(api)),
         media=dict(media),
         captioning=dict(captioning),
         ocr=dict(ocr),

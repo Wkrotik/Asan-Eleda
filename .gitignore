@@ -9,6 +9,8 @@ data/uploads/
 data/artifacts/
 data/model-cache/
 
+reports/
+
 challange-rules/
 
 .env

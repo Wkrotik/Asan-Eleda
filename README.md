@@ -181,6 +181,26 @@ If you want to prefetch model weights (helpful for offline demos):
 python scripts/warmup_all.py
 ```
 
+## Data Retention / Cleanup
+
+Uploads and derived artifacts are stored under `data/uploads/` and `data/artifacts/`.
+
+To delete old request directories (recommended for privacy), run:
+
+```bash
+python scripts/cleanup_storage.py --ttl-hours 168 --dry-run
+python scripts/cleanup_storage.py --ttl-hours 168
+```
+
+## Evaluation Harness
+
+You can evaluate the running API against a local manifest file (JSONL):
+
+```bash
+uvicorn app.main:app --port 8000
+python scripts/eval_api.py --manifest eval/sample_manifest.jsonl --base-url http://127.0.0.1:8000
+```
+
 ## Delivery / Packaging
 
 We will likely ship:
