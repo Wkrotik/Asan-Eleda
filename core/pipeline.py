@@ -22,6 +22,7 @@ from core.engines.verify_hybrid import HybridVerifierV1
 from core.priority import RulesPrioritizerV1
 from core.storage import LocalStorage
 from core.video import extract_keyframes_ffmpeg, is_video_path
+from core.media import MediaRef
 
 
 class Pipeline:
@@ -82,14 +83,14 @@ class Pipeline:
         stored = await self.storage.save_upload(request_id=request_id, field="media", upload=upload)
 
         # Video support (MVP): extract a small number of frames and aggregate.
-        media_refs = [stored]
+        media_refs: list[MediaRef] = [stored]
         if stored.content_type and stored.content_type.startswith("video/"):
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "frames"
             fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
             max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
             extracted = extract_keyframes_ffmpeg(video_path=stored.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
             media_refs = [
-                stored.__class__(
+                MediaRef(
                     path=f,
                     sha256=stored.sha256,
                     original_filename=stored.original_filename,
@@ -105,7 +106,7 @@ class Pipeline:
             max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
             extracted = extract_keyframes_ffmpeg(video_path=stored.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
             media_refs = [
-                stored.__class__(
+                MediaRef(
                     path=f,
                     sha256=stored.sha256,
                     original_filename=stored.original_filename,
@@ -125,13 +126,35 @@ class Pipeline:
         top_k = self.pipeline_cfg.api.category_top_k
         # Aggregate category predictions across frames by max confidence per id.
         pooled: dict[str, dict] = {}
-        for m in media_refs:
-            preds = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, media=m)
+        best_frame_for: dict[str, int] = {}
+        per_frame: list[dict] = []
+
+        for i, m in enumerate(media_refs):
+            # If categorizer supports debug output, capture it.
+            debug = None
+            top_k_debug = getattr(self.categorizer, "top_k_debug", None)
+            if callable(top_k_debug):
+                dbg_out = top_k_debug(categories=self.categories_cfg.categories, top_k=top_k, media=m)
+                preds, debug = dbg_out  # type: ignore[misc]
+            else:
+                preds = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, media=m)
+
+            per_frame.append(
+                {
+                    "frame_index": i,
+                    "frame_path": str(m.path),
+                    "top_k": preds,
+                    "debug": debug,
+                }
+            )
+
             for p in preds:
                 cid = p["id"]
                 cur = pooled.get(cid)
                 if cur is None or float(p["confidence"]) > float(cur["confidence"]):
                     pooled[cid] = p
+                    best_frame_for[cid] = i
+
         cats = sorted(pooled.values(), key=lambda x: float(x["confidence"]), reverse=True)[:top_k]
 
         pr = self.prioritizer.suggest(tags=tags, text=description)
@@ -147,6 +170,18 @@ class Pipeline:
         if stored.content_type and stored.content_type.startswith("video/"):
             warnings.append(Warning(code="video_frame_sampling", message="Video analyzed via sampled keyframes (MVP)."))
 
+        evidence: list[dict] = []
+        evidence.append(
+            {
+                "type": "category_aggregation",
+                "payload": {
+                    "frames_used": len(media_refs),
+                    "best_frame_for": best_frame_for,
+                    "per_frame": per_frame if len(media_refs) > 1 else [],
+                },
+            }
+        )
+
         return AnalyzeResponse(
             request_id=request_id,
             media={
@@ -161,6 +196,7 @@ class Pipeline:
             category_top_k=[CategoryCandidate(**x) for x in cats],
             priority=PrioritySuggestion(level=pr.level, confidence=pr.confidence, rationale=pr.rationale),
             warnings=warnings,
+            evidence=evidence,
         )
 
     async def verify_uploads(self, *, before: UploadFile, after: UploadFile) -> VerifyResponse:
@@ -169,8 +205,8 @@ class Pipeline:
         a = await self.storage.save_upload(request_id=request_id, field="after", upload=after)
 
         # If videos: compare representative frames (first extracted frame) for MVP.
-        b_ref = b
-        a_ref = a
+        b_ref: MediaRef = b
+        a_ref: MediaRef = a
 
         if (b.content_type and b.content_type.startswith("video/")) or is_video_path(b.path):
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "before_frames"
@@ -179,7 +215,7 @@ class Pipeline:
             extracted = extract_keyframes_ffmpeg(video_path=b.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
             if extracted.frames:
                 f = extracted.frames[0]
-                b_ref = b.__class__(
+                b_ref = MediaRef(
                     path=f,
                     sha256=b.sha256,
                     original_filename=b.original_filename,
@@ -194,7 +230,7 @@ class Pipeline:
             extracted = extract_keyframes_ffmpeg(video_path=a.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
             if extracted.frames:
                 f = extracted.frames[0]
-                a_ref = a.__class__(
+                a_ref = MediaRef(
                     path=f,
                     sha256=a.sha256,
                     original_filename=a.original_filename,
@@ -202,14 +238,28 @@ class Pipeline:
                     size_bytes=f.stat().st_size,
                 )
 
-        same_score, same_rationale = self.verifier.same_location(before=b_ref, after=a_ref)
+        # same_location may return (score, rationale) or (score, rationale, evidence)
+        same_ev = None
+        same_out = self.verifier.same_location(before=b_ref, after=a_ref)
+        if isinstance(same_out, tuple) and len(same_out) == 3:
+            same_score, same_rationale, same_ev = same_out  # type: ignore[misc]
+        else:
+            same_score, same_rationale = same_out  # type: ignore[misc]
+
         # Some verifiers use before/after for resolution heuristics.
         # Keep compatibility with verifiers that only accept same_location_score.
         resolved_fn = getattr(self.verifier, "resolved")
+
+        res_ev = None
         try:
-            res_score, res_rationale = resolved_fn(same_location_score=same_score, before=b_ref, after=a_ref)
+            res_out = resolved_fn(same_location_score=same_score, before=b_ref, after=a_ref)
         except TypeError:
-            res_score, res_rationale = resolved_fn(same_location_score=same_score)
+            res_out = resolved_fn(same_location_score=same_score)
+
+        if isinstance(res_out, tuple) and len(res_out) == 3:
+            res_score, res_rationale, res_ev = res_out  # type: ignore[misc]
+        else:
+            res_score, res_rationale = res_out  # type: ignore[misc]
 
         th = self.thresholds_cfg.raw.get("verify") or {}
         same_th = (th.get("same_location") or {})
@@ -229,6 +279,25 @@ class Pipeline:
         if (b.content_type and b.content_type.startswith("video/")) or (a.content_type and a.content_type.startswith("video/")):
             warnings.append(Warning(code="video_frame_sampling", message="Video verification uses representative keyframes (MVP)."))
 
+        evidence: list[dict] = []
+        evidence.append(
+            {
+                "type": "verify_signals",
+                "payload": {
+                    "same_location": same_ev,
+                    "resolved": res_ev,
+                    "thresholds": {
+                        "same_location": {"match": same_match, "warn": same_warn},
+                        "resolved": {"resolved": res_ok, "warn": res_warn},
+                    },
+                    "media": {
+                        "before_used": str(b_ref.path),
+                        "after_used": str(a_ref.path),
+                    },
+                },
+            }
+        )
+
         same_decision = "match" if same_score >= same_match else ("needs_review" if same_score >= same_warn else "mismatch")
         res_decision = "match" if res_score >= res_ok else ("needs_review" if res_score >= res_warn else "mismatch")
 
@@ -239,7 +308,7 @@ class Pipeline:
             same_location=VerifyDecision(score=same_score, decision=same_decision, rationale=same_rationale),
             resolved=VerifyDecision(score=res_score, decision=res_decision, rationale=res_rationale),
             warnings=warnings,
-            evidence=[],
+            evidence=evidence,
         )
 
 

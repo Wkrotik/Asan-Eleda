@@ -97,7 +97,7 @@ class HybridVerifierV1:
     pretrained: str = "laion2b_s34b_b79k"
     device: str | None = None
 
-    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str]:
+    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str, dict]:
         ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
         v1 = ctx.encode_image(load_image(before.path))
         v2 = ctx.encode_image(load_image(after.path))
@@ -114,13 +114,18 @@ class HybridVerifierV1:
             f"Hybrid same-location: clip={clip_score:.3f} (sim={clip_sim:.3f}), "
             f"orb={orb_score:.3f} (matches={num_matches}, inliers={inliers})."
         )
-        return score, rationale
+        ev = {
+            "clip": {"similarity": clip_sim, "score": clip_score, "model": {"name": self.model_name, "pretrained": self.pretrained}},
+            "orb": {"score": orb_score, "matches": num_matches, "inliers": inliers},
+            "blend": {"score": score, "weights": {"clip": 0.70, "orb": 0.30}},
+        }
+        return score, rationale, ev
 
-    def resolved(self, *, same_location_score: float, before: MediaRef | None = None, after: MediaRef | None = None) -> tuple[float, str]:
+    def resolved(self, *, same_location_score: float, before: MediaRef | None = None, after: MediaRef | None = None) -> tuple[float, str, dict]:
         # Baseline conservative score.
         base = max(0.0, min(1.0, same_location_score - 0.25))
         if before is None or after is None:
-            return base, "Resolved score derived conservatively from same-location confidence."
+            return base, "Resolved score derived conservatively from same-location confidence.", {"base": base}
 
         # If we can align and measure change, nudge slightly.
         try:
@@ -129,7 +134,7 @@ class HybridVerifierV1:
             orb_score, _nm, _inl, H = _orb_match_score(b_gray, a_gray)
             change = _difference_ratio_aligned(b_bgr, a_bgr, H)
         except Exception:
-            return base, "Resolved score conservative (alignment/diff unavailable)."
+            return base, "Resolved score conservative (alignment/diff unavailable).", {"base": base}
 
         score = base
         # Small-but-real change can indicate work completion; huge change is suspicious.
@@ -141,4 +146,10 @@ class HybridVerifierV1:
             rationale = f"Resolved heuristic: aligned change ratio={change:.3f} (very large change; suspicious)."
         else:
             rationale = f"Resolved heuristic: aligned change ratio={change:.3f}."
-        return score, rationale
+        ev = {
+            "base": base,
+            "aligned_change_ratio": float(change),
+            "orb_score": float(orb_score),
+            "score": float(score),
+        }
+        return score, rationale, ev

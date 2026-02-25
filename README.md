@@ -25,7 +25,7 @@ Two core capabilities exposed via an API:
   - same-location score/decision (match vs mismatch)
   - resolved score/decision (resolved vs needs_review)
   - warnings when evidence is weak or contradictory
-  - evidence artifacts (optional): representative frames, similarity numbers, OCR overlap
+  - evidence artifacts: signals, thresholds, frame selection (for audit/debug)
 
 Important: Category is treated as a backend routing hint even if the UI does not show it.
 
@@ -79,14 +79,25 @@ When ASAN provides:
   - `ocr: {text, confidence, bbox}[]`
   - `category_top_k: {id, label, confidence}[]` (length 3)
   - `priority: {level, confidence, rationale}`
-  - `warnings: {code, message}[]`
+   - `warnings: {code, message}[]`
+   - `evidence: {type, payload}[]`
 
 `POST /verify`
 - returns (conceptually):
   - `same_location: {score, decision, rationale}`
   - `resolved: {score, decision, rationale}`
-  - `warnings: {code, message}[]`
-  - `evidence: {type, payload}[]` (optional)
+   - `warnings: {code, message}[]`
+   - `evidence: {type, payload}[]` (optional)
+
+## Selecting A Pipeline Config
+
+Default config is `config/pipeline.yaml`.
+
+To try a different engine mix without editing files, set `PIPELINE_CONFIG`:
+
+```bash
+PIPELINE_CONFIG=config/pipeline.openclip.yaml uvicorn app.main:app --reload
+```
 
 ## Config-Driven Pieces
 

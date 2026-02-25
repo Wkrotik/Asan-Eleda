@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,14 @@ class PriorityRulesConfig:
 
 
 def load_pipeline_config() -> PipelineConfig:
-    p = ROOT / "config" / "pipeline.yaml"
+    override = os.environ.get("PIPELINE_CONFIG")
+    if override:
+        # Allow either repo-relative path (e.g. config/pipeline.openclip.yaml) or absolute path.
+        p = Path(override)
+        if not p.is_absolute():
+            p = ROOT / p
+    else:
+        p = ROOT / "config" / "pipeline.yaml"
     raw = _read_yaml(p)
     storage = raw.get("storage") or {}
     api = raw.get("api") or {}

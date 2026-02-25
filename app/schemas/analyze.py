@@ -20,4 +20,6 @@ class AnalyzeResponse(BaseModel):
 
     warnings: list[Warning] = Field(default_factory=list)
 
+    evidence: list[dict] = Field(default_factory=list)
+
     mode: Literal["mvp"] = "mvp"
