@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import UploadFile
+
+from core.media import MediaRef
 
 
 def _safe_ext(filename: str | None) -> str:
@@ -19,15 +20,6 @@ def _safe_ext(filename: str | None) -> str:
     return ext
 
 
-@dataclass(frozen=True)
-class StoredMedia:
-    path: Path
-    sha256: str
-    original_filename: str | None
-    content_type: str | None
-    size_bytes: int
-
-
 class LocalStorage:
     def __init__(self, *, uploads_dir: Path, artifacts_dir: Path):
         self.uploads_dir = uploads_dir
@@ -35,7 +27,7 @@ class LocalStorage:
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    async def save_upload(self, *, request_id: str, field: str, upload: UploadFile) -> StoredMedia:
+    async def save_upload(self, *, request_id: str, field: str, upload: UploadFile) -> MediaRef:
         req_dir = self.uploads_dir / request_id
         req_dir.mkdir(parents=True, exist_ok=True)
 
@@ -55,7 +47,7 @@ class LocalStorage:
                 size += len(chunk)
 
         await upload.close()
-        return StoredMedia(
+        return MediaRef(
             path=out_path,
             sha256=h.hexdigest(),
             original_filename=upload.filename,

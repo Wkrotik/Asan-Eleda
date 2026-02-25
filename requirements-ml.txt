@@ -1,0 +1,15 @@
+# Optional ML dependencies (offline models)
+#
+# Notes:
+# - Prefer Python 3.11 for broad wheel support.
+# - Choose ONE torch install strategy:
+#   - CPU only (portable):
+#       pip install --index-url https://download.pytorch.org/whl/cpu -r requirements-ml.txt
+#   - CUDA (GPU) (requires matching wheel availability):
+#       pip install --index-url https://download.pytorch.org/whl/cu124 -r requirements-ml.txt
+
+torch==2.6.0
+torchvision==0.21.0
+
+open-clip-torch==2.32.0
+Pillow==11.1.0

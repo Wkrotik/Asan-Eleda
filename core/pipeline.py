@@ -15,6 +15,7 @@ from core.config import (
     load_thresholds_config,
 )
 from core.engines.mock import MockCaptioner, MockCategorizer, MockEmbedder, MockOcr, MockVerifier
+from core.engines.openclip_engines import OpenClipSimilarityVerifier, OpenClipZeroShotCategorizer
 from core.priority import RulesPrioritizerV1
 from core.storage import LocalStorage
 
@@ -32,23 +33,38 @@ class Pipeline:
             artifacts_dir=self.pipeline_cfg.storage.artifacts_dir,
         )
 
-        # Engines (MVP uses mock implementations; swap via config later)
+        # Engines (MVP default is mock; can be swapped by config/pipeline.yaml)
+        engines = self.pipeline_cfg.engines
+
         self.captioner = MockCaptioner()
         self.ocr = MockOcr()
+
+        embedder_kind = engines.get("embedder", "mock")
+        categorizer_kind = engines.get("categorizer", "mock")
+        verifier_kind = engines.get("verifier", "mock")
+
         self.embedder = MockEmbedder()
         self.categorizer = MockCategorizer()
-        self.prioritizer = RulesPrioritizerV1(self.priority_rules_cfg.raw)
         self.verifier = MockVerifier()
+
+        if embedder_kind.startswith("openclip") or categorizer_kind.startswith("openclip") or verifier_kind.startswith("openclip"):
+            # Lazy imports are inside engines; config toggles enable OpenCLIP.
+            if categorizer_kind == "openclip_zeroshot":
+                self.categorizer = OpenClipZeroShotCategorizer()
+            if verifier_kind == "openclip_similarity":
+                self.verifier = OpenClipSimilarityVerifier()
+
+        self.prioritizer = RulesPrioritizerV1(self.priority_rules_cfg.raw)
 
     async def analyze_upload(self, upload: UploadFile) -> AnalyzeResponse:
         request_id = uuid.uuid4().hex
         stored = await self.storage.save_upload(request_id=request_id, field="media", upload=upload)
 
-        description, tags = self.captioner.caption(sha256=stored.sha256)
-        ocr_items = self.ocr.extract(sha256=stored.sha256)
+        description, tags = self.captioner.caption(media=stored)
+        ocr_items = self.ocr.extract(media=stored)
 
         top_k = self.pipeline_cfg.api.category_top_k
-        cats = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, sha256=stored.sha256)
+        cats = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, media=stored)
 
         pr = self.prioritizer.suggest(tags=tags, text=description)
 
@@ -81,7 +97,7 @@ class Pipeline:
         b = await self.storage.save_upload(request_id=request_id, field="before", upload=before)
         a = await self.storage.save_upload(request_id=request_id, field="after", upload=after)
 
-        same_score, same_rationale = self.verifier.same_location(before_sha256=b.sha256, after_sha256=a.sha256)
+        same_score, same_rationale = self.verifier.same_location(before=b, after=a)
         res_score, res_rationale = self.verifier.resolved(same_location_score=same_score)
 
         th = self.thresholds_cfg.raw.get("verify") or {}

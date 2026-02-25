@@ -6,3 +6,5 @@ python-multipart==0.0.20
 # Config + utils
 PyYAML==6.0.2
 pydantic==2.10.6
+
+# ML dependencies are optional; see requirements-ml.txt

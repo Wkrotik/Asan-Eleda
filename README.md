@@ -154,7 +154,21 @@ python -V
 
 3) Install dependencies
 
-Will be added once we scaffold the codebase (requirements file will pin versions).
+```bash
+pip install -r requirements.txt
+```
+
+Optional ML dependencies (OpenCLIP etc.):
+
+```bash
+pip install -r requirements-ml.txt
+```
+
+If you want to prefetch model weights (helpful for offline demos):
+
+```bash
+python scripts/warmup_openclip.py
+```
 
 ## Delivery / Packaging
 
