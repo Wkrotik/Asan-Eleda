@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from app.schemas.analyze import AnalyzeResponse
 from app.schemas.health import HealthResponse
 from app.schemas.verify import VerifyResponse
+from core.concurrency import INFERENCE_SEMAPHORE
 from core.pipeline import get_pipeline
 from core.storage import UploadTooLargeError, UnsupportedMediaTypeError
 from app.ui import render_index_html
@@ -35,7 +36,10 @@ def healthz() -> HealthResponse:
 async def analyze(file: UploadFile = File(...)) -> AnalyzeResponse:
     pipeline = get_pipeline()
     try:
-        return await pipeline.analyze_upload(file)
+        # Acquire semaphore to limit concurrent ML inference operations.
+        # This prevents GPU OOM or CPU memory exhaustion under load.
+        async with INFERENCE_SEMAPHORE:
+            return await pipeline.analyze_upload(file)
     except UploadTooLargeError as e:
         raise HTTPException(status_code=413, detail=str(e))
     except UnsupportedMediaTypeError as e:
@@ -49,7 +53,10 @@ async def verify(
 ) -> VerifyResponse:
     pipeline = get_pipeline()
     try:
-        return await pipeline.verify_uploads(before=before, after=after)
+        # Acquire semaphore to limit concurrent ML inference operations.
+        # This prevents GPU OOM or CPU memory exhaustion under load.
+        async with INFERENCE_SEMAPHORE:
+            return await pipeline.verify_uploads(before=before, after=after)
     except UploadTooLargeError as e:
         raise HTTPException(status_code=413, detail=str(e))
     except UnsupportedMediaTypeError as e:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from functools import lru_cache
@@ -140,9 +141,11 @@ class Pipeline:
         gps_round = int(self.pipeline_cfg.privacy.get("gps_round_decimals", 5))
         meta = None
         if stored.content_type and stored.content_type.startswith("image/"):
-            meta = extract_image_metadata(path=stored.path, gps_round_decimals=gps_round, include_gps=include_gps)
+            meta = await asyncio.to_thread(
+                extract_image_metadata, path=stored.path, gps_round_decimals=gps_round, include_gps=include_gps
+            )
         elif stored.content_type and stored.content_type.startswith("video/"):
-            meta = probe_video_metadata(stored.path)
+            meta = await asyncio.to_thread(probe_video_metadata, stored.path)
             # Optional rounding for GPS.
             if include_gps and isinstance(meta, dict) and isinstance(meta.get("gps"), dict):
                 meta["gps"]["lat"] = round(float(meta["gps"]["lat"]), gps_round)
@@ -158,7 +161,8 @@ class Pipeline:
             fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
             max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
             min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
-            media_refs = _extract_video_frames(
+            media_refs = await asyncio.to_thread(
+                _extract_video_frames,
                 stored=stored,
                 frames_dir=frames_dir,
                 fps=fps,
@@ -167,13 +171,13 @@ class Pipeline:
             )
 
         # Use first frame for caption; for video also sample OCR on multiple frames.
-        description, tags = self.captioner.caption(media=media_refs[0])
+        description, tags = await asyncio.to_thread(self.captioner.caption, media=media_refs[0])
 
         # OCR: for images use first (only) ref; for videos, aggregate OCR across sampled frames.
         ocr_items: list[dict] = []
         ocr_per_frame: list[dict] = []
         if len(media_refs) <= 1:
-            ocr_raw = self.ocr.extract(media=media_refs[0])
+            ocr_raw = await asyncio.to_thread(self.ocr.extract, media=media_refs[0])
             ocr_items = ocr_raw if isinstance(ocr_raw, list) else []
         else:
             # Bound compute: OCR on up to N frames spaced across the clip.
@@ -187,7 +191,7 @@ class Pipeline:
                 idxs = sorted({int(round(i * step)) for i in range(max_ocr_frames)})
             seen_text: set[str] = set()
             for i in idxs:
-                items_raw = self.ocr.extract(media=media_refs[i])
+                items_raw = await asyncio.to_thread(self.ocr.extract, media=media_refs[i])
                 items = items_raw if isinstance(items_raw, list) else []
                 ocr_per_frame.append({"frame_index": i, "frame_path": str(media_refs[i].path), "items": items})
                 for it in items:
@@ -211,10 +215,14 @@ class Pipeline:
             debug = None
             top_k_debug = getattr(self.categorizer, "top_k_debug", None)
             if callable(top_k_debug):
-                dbg_out = top_k_debug(categories=self.categories_cfg.categories, top_k=top_k, media=m)
+                dbg_out = await asyncio.to_thread(
+                    top_k_debug, categories=self.categories_cfg.categories, top_k=top_k, media=m
+                )
                 preds, debug = dbg_out  # type: ignore[misc]
             else:
-                preds = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, media=m)
+                preds = await asyncio.to_thread(
+                    self.categorizer.top_k, categories=self.categories_cfg.categories, top_k=top_k, media=m
+                )
 
             if not isinstance(preds, list):
                 preds = []
@@ -306,9 +314,11 @@ class Pipeline:
         b_meta = None
         a_meta = None
         if b.content_type and b.content_type.startswith("image/"):
-            b_meta = extract_image_metadata(path=b.path, gps_round_decimals=gps_round, include_gps=include_gps)
+            b_meta = await asyncio.to_thread(
+                extract_image_metadata, path=b.path, gps_round_decimals=gps_round, include_gps=include_gps
+            )
         elif (b.content_type and b.content_type.startswith("video/")) or is_video_path(b.path):
-            b_meta = probe_video_metadata(b.path)
+            b_meta = await asyncio.to_thread(probe_video_metadata, b.path)
             if include_gps and isinstance(b_meta, dict) and isinstance(b_meta.get("gps"), dict):
                 b_meta["gps"]["lat"] = round(float(b_meta["gps"]["lat"]), gps_round)
                 b_meta["gps"]["lon"] = round(float(b_meta["gps"]["lon"]), gps_round)
@@ -316,9 +326,11 @@ class Pipeline:
                 b_meta.pop("gps", None)
 
         if a.content_type and a.content_type.startswith("image/"):
-            a_meta = extract_image_metadata(path=a.path, gps_round_decimals=gps_round, include_gps=include_gps)
+            a_meta = await asyncio.to_thread(
+                extract_image_metadata, path=a.path, gps_round_decimals=gps_round, include_gps=include_gps
+            )
         elif (a.content_type and a.content_type.startswith("video/")) or is_video_path(a.path):
-            a_meta = probe_video_metadata(a.path)
+            a_meta = await asyncio.to_thread(probe_video_metadata, a.path)
             if include_gps and isinstance(a_meta, dict) and isinstance(a_meta.get("gps"), dict):
                 a_meta["gps"]["lat"] = round(float(a_meta["gps"]["lat"]), gps_round)
                 a_meta["gps"]["lon"] = round(float(a_meta["gps"]["lon"]), gps_round)
@@ -340,7 +352,8 @@ class Pipeline:
         if b_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "before_frames"
             min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
-            b_refs = _extract_video_frames(
+            b_refs = await asyncio.to_thread(
+                _extract_video_frames,
                 stored=b,
                 frames_dir=frames_dir,
                 fps=fps,
@@ -351,7 +364,8 @@ class Pipeline:
         if a_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "after_frames"
             min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
-            a_refs = _extract_video_frames(
+            a_refs = await asyncio.to_thread(
+                _extract_video_frames,
                 stored=a,
                 frames_dir=frames_dir,
                 fps=fps,
@@ -380,13 +394,15 @@ class Pipeline:
             tw = max(0, tw)
 
             # Precompute embeddings once per frame.
-            b_vecs = [self.verifier.clip_embed(media=ref) for ref in b_refs]
-            a_vecs = [self.verifier.clip_embed(media=ref) for ref in a_refs]
+            b_vecs = [await asyncio.to_thread(self.verifier.clip_embed, media=ref) for ref in b_refs]
+            a_vecs = [await asyncio.to_thread(self.verifier.clip_embed, media=ref) for ref in a_refs]
 
             clip_pairs: list[dict] = []
             for bi, bv in enumerate(b_vecs):
                 for ai, av in enumerate(a_vecs):
-                    clip_sim, clip_score = self.verifier.clip_similarity(before_vec=bv, after_vec=av)
+                    clip_sim, clip_score = await asyncio.to_thread(
+                        self.verifier.clip_similarity, before_vec=bv, after_vec=av
+                    )
                     clip_pairs.append(
                         {
                             "before_index": bi,
@@ -435,7 +451,8 @@ class Pipeline:
                 cs = clip_pairs_lookup.get((bi, ai))
                 clip_sim = float(cs["clip_sim"]) if cs else 0.0
                 clip_score = float(cs["clip_score"]) if cs else 0.0
-                same_score, same_rationale, same_ev = self.verifier.same_location_with_clip(
+                same_score, same_rationale, same_ev = await asyncio.to_thread(
+                    self.verifier.same_location_with_clip,
                     before=b_refs[bi],
                     after=a_refs[ai],
                     clip_sim=clip_sim,
@@ -475,7 +492,9 @@ class Pipeline:
             # Exhaustive evaluation (images or non-hybrid verifier).
             for bi, b_ref in enumerate(b_refs):
                 for ai, a_ref in enumerate(a_refs):
-                    same_score, same_rationale, same_ev = self.verifier.same_location(before=b_ref, after=a_ref)
+                    same_score, same_rationale, same_ev = await asyncio.to_thread(
+                        self.verifier.same_location, before=b_ref, after=a_ref
+                    )
 
                     pair_scores.append({"before_index": bi, "after_index": ai, "score": float(same_score)})
                     if float(same_score) > best_same_score:
@@ -492,7 +511,8 @@ class Pipeline:
         same_ev = best_same_ev
 
         # Call resolved with full signature (both verifiers now support it).
-        res_score, res_rationale, res_ev = self.verifier.resolved(
+        res_score, res_rationale, res_ev = await asyncio.to_thread(
+            self.verifier.resolved,
             same_location_score=same_score,
             before=b_ref,
             after=a_ref,
