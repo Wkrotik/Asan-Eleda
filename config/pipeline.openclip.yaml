@@ -13,3 +13,7 @@ storage:
   artifacts_dir: data/artifacts
 api:
   category_top_k: 3
+
+categorization:
+  confidence_method: softmax
+  softmax_temperature: 0.25

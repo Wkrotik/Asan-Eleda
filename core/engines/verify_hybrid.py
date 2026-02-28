@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from core.engines.openclip import get_openclip_context, load_image
 from core.media import MediaRef
+
+logger = logging.getLogger(__name__)
 
 
 def _require_cv2():
@@ -63,7 +66,8 @@ def _orb_match_score(img1_gray, img2_gray) -> tuple[float, int, int, object | No
         import numpy as np  # local
 
         H = np.asarray(H, dtype=np.float32)
-    except Exception:
+    except (TypeError, ValueError) as exc:
+        logger.debug("Homography conversion failed: %s", exc)
         return score, len(keep), inliers, None
     return score, len(keep), inliers, H
 
@@ -97,31 +101,83 @@ class HybridVerifierV1:
     pretrained: str = "laion2b_s34b_b79k"
     device: str | None = None
 
-    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str, dict]:
+    def clip_embed(self, *, media: MediaRef):
         ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
-        v1 = ctx.encode_image(load_image(before.path))
-        v2 = ctx.encode_image(load_image(after.path))
-        clip_sim = float((v1 @ v2).item())
-        clip_score = max(0.0, min(1.0, (clip_sim + 1.0) / 2.0))
+        return ctx.encode_image(load_image(media.path))
 
+    @staticmethod
+    def _clip_score_from_sim(clip_sim: float) -> float:
+        return max(0.0, min(1.0, (float(clip_sim) + 1.0) / 2.0))
+
+    def clip_similarity(self, *, before_vec, after_vec) -> tuple[float, float]:
+        clip_sim = float((before_vec @ after_vec).item())
+        return clip_sim, self._clip_score_from_sim(clip_sim)
+
+    def orb_signals(self, *, before: MediaRef, after: MediaRef) -> dict:
         b_gray, _ = _to_gray_np(before.path)
         a_gray, _ = _to_gray_np(after.path)
-        orb_score, num_matches, inliers, _H = _orb_match_score(b_gray, a_gray)
+        orb_score, num_matches, inliers, H = _orb_match_score(b_gray, a_gray)
+        return {"score": float(orb_score), "matches": int(num_matches), "inliers": int(inliers), "homography": H}
 
-        # Weighted blend; OpenCLIP handles viewpoint changes, ORB adds geometric consistency.
-        score = max(0.0, min(1.0, 0.70 * clip_score + 0.30 * orb_score))
+    @staticmethod
+    def _blend(clip_score: float, orb_score: float) -> float:
+        return max(0.0, min(1.0, 0.70 * float(clip_score) + 0.30 * float(orb_score)))
+
+    def same_location_with_clip(
+        self,
+        *,
+        before: MediaRef,
+        after: MediaRef,
+        clip_sim: float,
+        clip_score: float,
+    ) -> tuple[float, str, dict]:
+        orb = self.orb_signals(before=before, after=after)
+        orb_score = float(orb["score"])
+        score = self._blend(clip_score, orb_score)
         rationale = (
-            f"Hybrid same-location: clip={clip_score:.3f} (sim={clip_sim:.3f}), "
-            f"orb={orb_score:.3f} (matches={num_matches}, inliers={inliers})."
+            f"Hybrid same-location: clip={clip_score:.3f} (sim={float(clip_sim):.3f}), "
+            f"orb={orb_score:.3f} (matches={orb['matches']}, inliers={orb['inliers']})."
         )
         ev = {
-            "clip": {"similarity": clip_sim, "score": clip_score, "model": {"name": self.model_name, "pretrained": self.pretrained}},
-            "orb": {"score": orb_score, "matches": num_matches, "inliers": inliers},
+            "clip": {
+                "similarity": float(clip_sim),
+                "score": float(clip_score),
+                "model": {"name": self.model_name, "pretrained": self.pretrained},
+            },
+            "orb": {
+                "score": orb_score,
+                "matches": orb["matches"],
+                "inliers": orb["inliers"],
+                "has_homography": bool(orb.get("homography") is not None),
+            },
             "blend": {"score": score, "weights": {"clip": 0.70, "orb": 0.30}},
         }
+        # Store homography as a small JSON-serializable 3x3 matrix when available.
+        H = orb.get("homography")
+        if H is not None:
+            try:
+                _cv2, np = _require_cv2()
+                Hm = np.asarray(H, dtype=np.float32)
+                if getattr(Hm, "shape", None) == (3, 3):
+                    ev["orb"]["homography"] = [[float(x) for x in row] for row in Hm.tolist()]
+            except (TypeError, ValueError) as exc:
+                logger.debug("Homography serialization skipped: %s", exc)
         return score, rationale, ev
 
-    def resolved(self, *, same_location_score: float, before: MediaRef | None = None, after: MediaRef | None = None) -> tuple[float, str, dict]:
+    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str, dict]:
+        v1 = self.clip_embed(media=before)
+        v2 = self.clip_embed(media=after)
+        clip_sim, clip_score = self.clip_similarity(before_vec=v1, after_vec=v2)
+        return self.same_location_with_clip(before=before, after=after, clip_sim=clip_sim, clip_score=clip_score)
+
+    def resolved(
+        self,
+        *,
+        same_location_score: float,
+        before: MediaRef | None = None,
+        after: MediaRef | None = None,
+        same_location_evidence: dict | None = None,
+    ) -> tuple[float, str, dict]:
         # Baseline conservative score.
         base = max(0.0, min(1.0, same_location_score - 0.25))
         if before is None or after is None:
@@ -129,16 +185,46 @@ class HybridVerifierV1:
 
         # If we can align and measure change, nudge slightly.
         try:
+            _cv2, np = _require_cv2()
             b_gray, b_bgr = _to_gray_np(before.path)
             a_gray, a_bgr = _to_gray_np(after.path)
-            orb_score, _nm, _inl, H = _orb_match_score(b_gray, a_gray)
+
+            orb_score = None
+            H = None
+
+            if isinstance(same_location_evidence, dict):
+                orb_ev = same_location_evidence.get("orb") if isinstance(same_location_evidence.get("orb"), dict) else None
+                if isinstance(orb_ev, dict):
+                    score_val = orb_ev.get("score")
+                    if score_val is not None:
+                        try:
+                            orb_score = float(score_val)  # type: ignore[arg-type]
+                        except (TypeError, ValueError):
+                            orb_score = None
+                    hm = orb_ev.get("homography")
+                    if isinstance(hm, list) and len(hm) == 3:
+                        try:
+                            Hm = np.asarray(hm, dtype=np.float32)
+                            if getattr(Hm, "shape", None) == (3, 3):
+                                H = Hm
+                        except (TypeError, ValueError):
+                            H = None
+
+            if orb_score is None:
+                orb_score, _nm, _inl, H = _orb_match_score(b_gray, a_gray)
+
+            if H is None:
+                return base, "Resolved score conservative (alignment unavailable).", {"base": base, "orb_score": float(orb_score)}
+
             change = _difference_ratio_aligned(b_bgr, a_bgr, H)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Resolved alignment/diff computation failed: %s", exc)
             return base, "Resolved score conservative (alignment/diff unavailable).", {"base": base}
 
         score = base
         # Small-but-real change can indicate work completion; huge change is suspicious.
-        if orb_score >= 0.15 and 0.02 <= change <= 0.25:
+        orb_score_f = float(orb_score) if orb_score is not None else 0.0
+        if orb_score_f >= 0.15 and 0.02 <= change <= 0.25:
             score = min(1.0, score + 0.10)
             rationale = f"Resolved heuristic: aligned change ratio={change:.3f} (notable change)."
         elif change >= 0.45:
@@ -149,7 +235,7 @@ class HybridVerifierV1:
         ev = {
             "base": base,
             "aligned_change_ratio": float(change),
-            "orb_score": float(orb_score),
+            "orb_score": float(orb_score_f),
             "score": float(score),
         }
         return score, rationale, ev

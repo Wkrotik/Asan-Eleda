@@ -39,8 +39,10 @@ class PipelineConfig:
     storage: StorageConfig
     api: ApiConfig
     media: dict[str, Any]
+    categorization: dict[str, Any]
     captioning: dict[str, Any]
     ocr: dict[str, Any]
+    privacy: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -72,8 +74,10 @@ def load_pipeline_config() -> PipelineConfig:
     storage = raw.get("storage") or {}
     api = raw.get("api") or {}
     media = raw.get("media") or {}
+    categorization = raw.get("categorization") or {}
     captioning = raw.get("captioning") or {}
     ocr = raw.get("ocr") or {}
+    privacy = raw.get("privacy") or {}
     return PipelineConfig(
         engines=dict(raw.get("engines") or {}),
         storage=StorageConfig(
@@ -84,13 +88,21 @@ def load_pipeline_config() -> PipelineConfig:
         ),
         api=ApiConfig(category_top_k=int(api.get("category_top_k", 3)), raw=dict(api)),
         media=dict(media),
+        categorization=dict(categorization),
         captioning=dict(captioning),
         ocr=dict(ocr),
+        privacy=dict(privacy),
     )
 
 
 def load_categories_config() -> CategoriesConfig:
-    p = ROOT / "config" / "categories.yaml"
+    override = os.environ.get("CATEGORIES_CONFIG")
+    if override:
+        p = Path(override)
+        if not p.is_absolute():
+            p = ROOT / p
+    else:
+        p = ROOT / "config" / "categories.yaml"
     raw = _read_yaml(p)
     return CategoriesConfig(version=int(raw.get("version", 1)), categories=list(raw.get("categories") or []))
 

@@ -33,7 +33,10 @@ class EasyOcrV1:
 
     def extract(self, *, media: MediaRef) -> list[dict]:
         _, np, Image = _require_easyocr()
-        im = Image.open(media.path).convert("RGB")
+        im_raw = Image.open(media.path)
+        im = im_raw.convert("RGB")
+        im.load()  # Load pixel data into memory
+        im_raw.close()  # Close the file handle
         arr = np.array(im)
         results = self.reader.readtext(arr)
 

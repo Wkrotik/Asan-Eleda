@@ -2,15 +2,28 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, UploadFile
 from fastapi import HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
 
 from app.schemas.analyze import AnalyzeResponse
 from app.schemas.health import HealthResponse
 from app.schemas.verify import VerifyResponse
 from core.pipeline import get_pipeline
-from core.storage import UploadTooLargeError
+from core.storage import UploadTooLargeError, UnsupportedMediaTypeError
+from app.ui import render_index_html
 
 
 router = APIRouter()
+
+
+@router.get("/demo", include_in_schema=False, response_class=HTMLResponse)
+def ui_index() -> str:
+    return render_index_html()
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse("favicon.ico")
 
 
 @router.get("/healthz", response_model=HealthResponse)
@@ -25,6 +38,8 @@ async def analyze(file: UploadFile = File(...)) -> AnalyzeResponse:
         return await pipeline.analyze_upload(file)
     except UploadTooLargeError as e:
         raise HTTPException(status_code=413, detail=str(e))
+    except UnsupportedMediaTypeError as e:
+        raise HTTPException(status_code=415, detail=str(e))
 
 
 @router.post("/verify", response_model=VerifyResponse)
@@ -37,3 +52,5 @@ async def verify(
         return await pipeline.verify_uploads(before=before, after=after)
     except UploadTooLargeError as e:
         raise HTTPException(status_code=413, detail=str(e))
+    except UnsupportedMediaTypeError as e:
+        raise HTTPException(status_code=415, detail=str(e))

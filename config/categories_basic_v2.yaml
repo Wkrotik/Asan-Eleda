@@ -1,0 +1,147 @@
+# Basic self-defined taxonomy (until official organizer taxonomy arrives)
+version: 2
+categories:
+  - id: electricity_outage
+    label: Electricity outage
+    synonyms:
+      - no power
+      - power outage
+      - blackout
+      - power cut
+      - outage
+      - downed power line
+      - fallen power line
+      - transformer
+
+  - id: street_lighting
+    label: Street lighting
+    synonyms:
+      - street light
+      - streetlight
+      - lamp post
+      - broken streetlight
+      - light out
+
+  - id: water_leak
+    label: Water leak
+    synonyms:
+      - water leak
+      - pipe leak
+      - burst pipe
+      - broken pipe
+      - flooding
+      - water main
+
+  - id: sewage_drainage
+    label: Sewage and drainage
+    synonyms:
+      - sewage
+      - sewer
+      - sewer overflow
+      - sewage overflow
+      - drainage
+      - drain
+      - blocked drain
+      - manhole
+      - open manhole
+
+  - id: gas_leak
+    label: Gas leak
+    synonyms:
+      - gas leak
+      - smell of gas
+      - gas pipe
+
+  - id: road_damage_pothole
+    label: Road damage and potholes
+    synonyms:
+      - pothole
+      - road damage
+      - broken asphalt
+      - cracked asphalt
+      - damaged road
+      - sinkhole
+
+  - id: traffic_signals
+    label: Traffic signals
+    synonyms:
+      - traffic light
+      - traffic lights
+      - signal
+      - traffic light out
+
+  - id: road_signage_markings
+    label: Road signage and markings
+    synonyms:
+      - road sign
+      - signage
+      - sign
+      - road marking
+      - lane marking
+      - crosswalk
+      - zebra crossing
+
+  - id: sidewalk_access
+    label: Sidewalk and pedestrian access
+    synonyms:
+      - sidewalk
+      - pavement
+      - curb
+      - damaged sidewalk
+      - broken sidewalk
+      - blocked sidewalk
+      - accessibility
+      - wheelchair
+
+  - id: public_cleanliness_waste
+    label: Waste and cleanliness
+    synonyms:
+      - trash
+      - garbage
+      - litter
+      - dumping
+      - illegal dumping
+
+  - id: greenery_fallen_tree
+    label: Greenery and fallen trees
+    synonyms:
+      - fallen tree
+      - tree fell
+      - fallen branch
+      - blocked by tree
+      - pruning
+      - greenery
+
+  - id: obstruction_blocked_road
+    label: Obstruction and blocked road
+    synonyms:
+      - blocked road
+      - road closed
+      - obstruction
+      - cannot pass
+      - barrier
+
+  - id: accident_vehicle
+    label: Accident and vehicle incident
+    synonyms:
+      - crash
+      - accident
+      - collision
+      - car crash
+
+  - id: building_infrastructure_damage
+    label: Building and infrastructure damage
+    synonyms:
+      - bridge
+      - tunnel
+      - fence
+      - barrier
+      - railing
+      - stairs
+      - facade
+      - public building
+      - collapse
+
+  - id: other
+    label: Other
+    synonyms: []

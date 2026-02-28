@@ -11,6 +11,10 @@ data/model-cache/
 
 reports/
 
+# Local media fixtures (may contain GPS EXIF).
+testing-assets/*
+!testing-assets/README.txt
+
 challange-rules/
 
 .env

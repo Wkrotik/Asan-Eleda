@@ -15,6 +15,12 @@ curl -s -X POST \
   http://127.0.0.1:8000/analyze | jq
 ```
 
+Open the demo UI:
+
+```bash
+xdg-open http://127.0.0.1:8000/demo
+```
+
 Verify before vs after:
 
 ```bash
@@ -27,6 +33,8 @@ curl -s -X POST \
 Notes:
 - Engines are selected via `config/pipeline.yaml` (or `PIPELINE_CONFIG=...`).
 - The JSON shapes are intended to stay stable as we swap/upgrade engines.
+- When available, GPS metadata is included in response `evidence` (can be disabled in `config/pipeline.yaml`).
+- A simple demo UI is available at `GET /demo`.
 
 Retention cleanup (recommended for privacy):
 

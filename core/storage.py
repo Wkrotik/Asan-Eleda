@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from pathlib import Path
 
@@ -8,12 +9,26 @@ from fastapi import UploadFile
 
 from core.media import MediaRef
 
+logger = logging.getLogger(__name__)
+
+# Allowed MIME type prefixes for uploads.
+ALLOWED_CONTENT_TYPE_PREFIXES = ("image/", "video/")
+
 
 class UploadTooLargeError(RuntimeError):
     def __init__(self, *, size_bytes: int, max_bytes: int):
         super().__init__(f"Upload exceeds limit ({size_bytes} > {max_bytes} bytes)")
         self.size_bytes = int(size_bytes)
         self.max_bytes = int(max_bytes)
+
+
+class UnsupportedMediaTypeError(RuntimeError):
+    """Raised when the uploaded file has an unsupported content type."""
+
+    def __init__(self, *, content_type: str | None):
+        ct = content_type or "(unknown)"
+        super().__init__(f"Unsupported media type: {ct}. Allowed: image/*, video/*")
+        self.content_type = content_type
 
 
 def _safe_ext(filename: str | None) -> str:
@@ -27,6 +42,14 @@ def _safe_ext(filename: str | None) -> str:
     return ext
 
 
+def _is_allowed_content_type(content_type: str | None) -> bool:
+    """Check if content type is in the allowlist."""
+    if not content_type:
+        return False
+    ct = content_type.lower().strip()
+    return any(ct.startswith(prefix) for prefix in ALLOWED_CONTENT_TYPE_PREFIXES)
+
+
 class LocalStorage:
     def __init__(self, *, uploads_dir: Path, artifacts_dir: Path, max_upload_bytes: int | None = None):
         self.uploads_dir = uploads_dir
@@ -36,6 +59,10 @@ class LocalStorage:
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     async def save_upload(self, *, request_id: str, field: str, upload: UploadFile) -> MediaRef:
+        # Validate content type before processing
+        if not _is_allowed_content_type(upload.content_type):
+            raise UnsupportedMediaTypeError(content_type=upload.content_type)
+
         req_dir = self.uploads_dir / request_id
         req_dir.mkdir(parents=True, exist_ok=True)
 

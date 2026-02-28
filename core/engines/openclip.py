@@ -75,7 +75,11 @@ def get_openclip_context(
 def load_image(path):
     _, _, Image = _require_openclip()
     im = Image.open(path)
-    return im.convert("RGB")
+    im_rgb = im.convert("RGB")
+    # Load pixel data into memory so we can close the file handle
+    im_rgb.load()
+    im.close()
+    return im_rgb
 
 
 def cosine_similarity(vec_a, vec_b) -> float:

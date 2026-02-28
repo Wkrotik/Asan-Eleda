@@ -1,4 +1,4 @@
-# ASAN Appeal AI (Offline MVP)
+# Asan Eleda
 
 This repo contains the plan and implementation skeleton for an offline (on-device/on-prem) MVP for the ASAN AI Hub challenge:
 "Intelligent Analysis of Visual Content and Automated Compliance Verification".
@@ -86,12 +86,21 @@ When ASAN provides:
 - returns (conceptually):
   - `same_location: {score, decision, rationale}`
   - `resolved: {score, decision, rationale}`
-   - `warnings: {code, message}[]`
-   - `evidence: {type, payload}[]` (optional)
+  - `warnings: {code, message}[]`
+  - `review_reasons: {code, signal, detail}[]` — structured reasons when decision is `needs_review` or `mismatch`
+  - `evidence: {type, payload}[]` (optional)
+
+Demo UI:
+- `GET /demo` serves a simple single-page UI to upload media and call the API.
 
 ## Selecting A Pipeline Config
 
 Default config is `config/pipeline.yaml`.
+
+Category taxonomy config:
+- Default is `config/categories.yaml` (v3 with ~28 categories)
+- Legacy taxonomies available: `config/categories_basic_v2.yaml`, `config/categories_v3.yaml`
+- Override with `CATEGORIES_CONFIG=path/to/categories.yaml`
 
 To try a different engine mix without editing files, set `PIPELINE_CONFIG`:
 
@@ -99,19 +108,67 @@ To try a different engine mix without editing files, set `PIPELINE_CONFIG`:
 PIPELINE_CONFIG=config/pipeline.openclip.yaml uvicorn app.main:app --reload
 ```
 
+### Categorizer Confidence Calibration
+
+When using `openclip_zeroshot`, the category `confidence` values are calibrated via a softmax over pooled similarities.
+You can tune this in `config/pipeline.yaml` under `categorization`:
+
+```yaml
+categorization:
+  confidence_method: softmax
+  softmax_temperature: 0.25
+```
+
+Lower `softmax_temperature` makes the distribution peakier (more confident top-1), higher makes it flatter.
+
 ## Config-Driven Pieces
 
 All items below are intended to be edited without code changes:
 
 - `config/categories.yaml`
-  - placeholder category list now
-  - later replace with official ASAN taxonomy
+  - Default taxonomy with ~28 visually-distinguishable civic issue categories
+  - Based on real-world 311 systems (NYC 311, Boston 311, FixMyStreet)
+  - Override with `CATEGORIES_CONFIG` env var if needed
 - `config/priority_rules.yaml`
   - rules and thresholds
 - `config/thresholds.yaml`
   - warning thresholds for verification
 - `config/pipeline.yaml`
   - which engine implementation to use (embedder/captioner/ocr/etc.)
+
+### Category Taxonomy
+
+The default taxonomy (`config/categories.yaml`) includes 28 categories across 6 groups:
+
+| Group | Categories |
+|-------|------------|
+| Roads & Pavement | pothole, road_crack, manhole_cover, road_sign_damage, broken_sidewalk, sidewalk_obstruction, curb_damage |
+| Lighting & Signals | street_light_out, damaged_light_pole, traffic_signal_malfunction |
+| Water & Drainage | flooded_street, fire_hydrant_leak, clogged_drain, water_main_leak |
+| Waste & Sanitation | overflowing_trash_bin, illegal_dumping, litter_debris, abandoned_furniture |
+| Trees & Vegetation | fallen_tree, dead_tree, overgrown_vegetation, damaged_park |
+| Property & Safety | graffiti, abandoned_vehicle, damaged_public_fixture, exposed_wiring, construction_hazard, hazardous_spill |
+
+Plus `other` as a fallback category.
+
+Each category includes synonyms to improve zero-shot classification accuracy.
+
+### Review Reasons (Verify Endpoint)
+
+When `/verify` returns `needs_review` or `mismatch` for either `same_location` or `resolved`, the response includes a `review_reasons` array explaining why:
+
+```json
+{
+  "same_location": { "decision": "needs_review", ... },
+  "resolved": { "decision": "needs_review", ... },
+  "review_reasons": [
+    {"code": "location_needs_review", "signal": "same_location", "detail": "Score 0.62 is between warn (0.60) and match (0.75) thresholds."},
+    {"code": "gps_mismatch", "signal": "same_location", "detail": "GPS coordinates differ by ~312m (threshold: 250m)."}
+  ]
+}
+```
+
+This helps operators understand exactly why a case needs human review.
 
 ## Project Timeline (50 days / ~7 weeks)
 
@@ -200,6 +257,25 @@ You can evaluate the running API against a local manifest file (JSONL):
 uvicorn app.main:app --port 8000
 python scripts/eval_api.py --manifest eval/sample_manifest.jsonl --base-url http://127.0.0.1:8000
 ```
+
+You can also run a local-only manifest against files in `testing-assets/`:
+
+```bash
+uvicorn app.main:app --port 8000
+python scripts/eval_api.py --manifest eval/testing_assets_manifest.jsonl --base-url http://127.0.0.1:8000
+```
+
+Using the expanded basic taxonomy:
+
+```bash
+CATEGORIES_CONFIG=config/categories_basic_v2.yaml uvicorn app.main:app --port 8000
+CATEGORIES_CONFIG=config/categories_basic_v2.yaml python scripts/eval_api.py --manifest eval/categories_basic_v2_manifest.jsonl --base-url http://127.0.0.1:8000
+```
+
+## Location Metadata (Optional)
+
+When available, the API includes GPS metadata (EXIF for images, ffprobe tags for videos) in `evidence` for audit/location refinement.
+This can be disabled or tuned in `config/pipeline.yaml` under `privacy`.
 
 ## Delivery / Packaging
 

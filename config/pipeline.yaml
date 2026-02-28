@@ -17,9 +17,29 @@ api:
   # Hard limit for uploaded files (stream-enforced). Set null to disable.
   max_upload_mb: 200
 
+# Categorization/calibration knobs
+categorization:
+  # OpenCLIP zero-shot category confidence calibration.
+  confidence_method: softmax
+  softmax_temperature: 0.25
+
 media:
   max_video_frames: 8
   video_fps: 0.5
+  # Ensure very short clips still yield multiple frames.
+  min_video_frames: 3
+  # OCR on video is more expensive; sample a few frames.
+  max_video_ocr_frames: 4
+  # Verification: cap expensive frame-pair evaluations (ORB/homography).
+  max_video_pair_evals_verify: 24
+  # Prefer time-aligned candidates by index (0 disables).
+  video_pair_temporal_window: 2
+
+privacy:
+  # When available, include GPS metadata (EXIF/ffprobe) in response evidence.
+  include_gps_evidence: true
+  gps_round_decimals: 5
+  gps_mismatch_warn_m: 250
 captioning:
   model_id: Salesforce/blip-image-captioning-base
   max_new_tokens: 40

@@ -2,12 +2,60 @@
 version: 1
 levels: [low, medium, high]
 rules:
-  - id: safety_keywords
-    description: Increase priority when safety-related concepts detected.
+  - id: immediate_danger
+    description: High priority when immediate danger/safety risk is implied.
     level: high
-    keywords: [fire, smoke, crash, accident, fallen, exposed wire, flood]
-  - id: service_interruption
-    description: Medium priority for service interruption signals.
+    keywords:
+      - fire
+      - smoke
+      - explosion
+      - crash
+      - accident
+      - exposed wire
+      - downed power line
+      - fallen pole
+      - gas leak
+      - sinkhole
+      - flood
+      - flooding
+      - collapse
+      - dangerous
+  - id: critical_utilities
+    description: High priority when core utilities are disrupted or hazardous.
+    level: high
+    keywords:
+      - no power
+      - power outage
+      - outage
+      - blackout
+      - no water
+      - water outage
+      - sewage overflow
+      - sewer overflow
+      - burst pipe
+      - transformer
+  - id: blocked_access_or_transport
+    description: Medium priority when access/transport is significantly affected.
     level: medium
-    keywords: [outage, no water, no power, blocked]
+    keywords:
+      - blocked
+      - blocked road
+      - road closed
+      - cannot pass
+      - obstruction
+      - traffic light out
+      - fallen tree
+  - id: infrastructure_damage
+    description: Medium priority for visible damage likely requiring timely repair.
+    level: medium
+    keywords:
+      - pothole
+      - road damage
+      - broken asphalt
+      - cracked
+      - manhole
+      - open manhole
+      - damaged sidewalk
+      - broken sidewalk
+      - damaged curb
 default_level: low

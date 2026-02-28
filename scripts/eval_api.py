@@ -33,6 +33,26 @@ def _decision_is_match(decision: dict) -> bool:
     return str(decision.get("decision")) == "match"
 
 
+def _has_warning(data: dict, code: str) -> bool:
+    for w in (data.get("warnings") or []):
+        if isinstance(w, dict) and str(w.get("code")) == code:
+            return True
+    return False
+
+
+def _extract_gps_distance_m(data: dict) -> float | None:
+    # verify response: evidence -> verify_signals -> payload -> metadata -> gps_distance_m
+    try:
+        for ev in (data.get("evidence") or []):
+            if isinstance(ev, dict) and ev.get("type") == "verify_signals":
+                md = (ev.get("payload") or {}).get("metadata") or {}
+                val = md.get("gps_distance_m")
+                return None if val is None else float(val)
+    except Exception:
+        return None
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Offline evaluation harness for /analyze and /verify")
     ap.add_argument("--base-url", default="http://127.0.0.1:8000")
@@ -55,7 +75,8 @@ def main() -> int:
     verify_total = 0
     verify_same_correct = 0
     verify_res_correct = 0
-    verify_has_labels = 0
+    verify_same_labeled = 0
+    verify_res_labeled = 0
 
     analyze_total = 0
     analyze_top1_correct = 0
@@ -94,6 +115,48 @@ def main() -> int:
                     "warnings": data.get("warnings"),
                 }
 
+                # Optional evidence checks (best-effort)
+                exp_min_frames = case.get("expect_min_video_frames")
+                if exp_min_frames is not None:
+                    got_frames = None
+                    try:
+                        for ev in (data.get("evidence") or []):
+                            if isinstance(ev, dict) and ev.get("type") == "category_aggregation":
+                                frames_val = (ev.get("payload") or {}).get("frames_used")
+                                got_frames = None if frames_val is None else int(frames_val)
+                                break
+                    except Exception:
+                        got_frames = None
+
+                    record["video_expectations"] = {
+                        "expect_min_video_frames": int(exp_min_frames),
+                        "got_frames_used": got_frames,
+                    }
+                    if got_frames is None or got_frames < int(exp_min_frames):
+                        record["ok"] = False
+                        record["error"] = "Video min-frames expectation failed"
+
+                exp_ocr_agg = case.get("expect_ocr_aggregation")
+                if exp_ocr_agg is not None:
+                    got_ocr_agg = False
+                    try:
+                        for ev in (data.get("evidence") or []):
+                            if isinstance(ev, dict) and ev.get("type") == "ocr_aggregation":
+                                got_ocr_agg = True
+                                break
+                    except Exception:
+                        got_ocr_agg = False
+
+                    rec = record.get("video_expectations") or {}
+                    if not isinstance(rec, dict):
+                        rec = {}
+                    rec["expect_ocr_aggregation"] = bool(exp_ocr_agg)
+                    rec["got_ocr_aggregation"] = bool(got_ocr_agg)
+                    record["video_expectations"] = rec
+                    if bool(got_ocr_agg) != bool(exp_ocr_agg):
+                        record["ok"] = False
+                        record["error"] = "OCR aggregation expectation failed"
+
                 analyze_total += 1
                 exp_cat = case.get("expect_category_id")
                 if exp_cat is not None:
@@ -106,6 +169,11 @@ def main() -> int:
                             analyze_top1_correct += 1
                         if exp_cat in got_ids[:3]:
                             analyze_top3_correct += 1
+
+                    # Track labeled accuracy for this case even if API disagrees.
+                    if exp_cat not in got_ids[:3]:
+                        record.setdefault("label_mismatch", {})
+                        record["label_mismatch"] = {"expect_category_id": exp_cat, "got_ids": got_ids[:3]}
 
                 outf.write(json.dumps(record) + "\n")
                 continue
@@ -146,18 +214,31 @@ def main() -> int:
             verify_total += 1
             exp_same = case.get("expect_same_location")
             exp_res = case.get("expect_resolved")
-            if exp_same is not None or exp_res is not None:
-                verify_has_labels += 1
 
             if exp_same is not None:
+                verify_same_labeled += 1
                 got_same = _decision_is_match(data.get("same_location") or {})
                 if bool(exp_same) == bool(got_same):
                     verify_same_correct += 1
 
             if exp_res is not None:
+                verify_res_labeled += 1
                 got_res = _decision_is_match(data.get("resolved") or {})
                 if bool(exp_res) == bool(got_res):
                     verify_res_correct += 1
+
+            # Optional GPS expectations (verify only)
+            exp_gps_mismatch = case.get("expect_gps_mismatch")
+            if exp_gps_mismatch is not None:
+                got = _has_warning(data, "gps_mismatch")
+                record["gps_expectations"] = {
+                    "expect_gps_mismatch": bool(exp_gps_mismatch),
+                    "got_gps_mismatch": bool(got),
+                    "gps_distance_m": _extract_gps_distance_m(data),
+                }
+                if bool(got) != bool(exp_gps_mismatch):
+                    record["ok"] = False
+                    record["error"] = "GPS expectation failed"
 
             outf.write(json.dumps(record) + "\n")
 
@@ -170,9 +251,10 @@ def main() -> int:
         },
         "verify": {
             "total": verify_total,
-            "labeled": verify_has_labels,
-            "same_location_accuracy": (verify_same_correct / verify_has_labels) if verify_has_labels else None,
-            "resolved_accuracy": (verify_res_correct / verify_has_labels) if verify_has_labels else None,
+            "labeled_same_location": verify_same_labeled,
+            "labeled_resolved": verify_res_labeled,
+            "same_location_accuracy": (verify_same_correct / verify_same_labeled) if verify_same_labeled else None,
+            "resolved_accuracy": (verify_res_correct / verify_res_labeled) if verify_res_labeled else None,
         },
         "outputs": {
             "results_jsonl": str(out_path),

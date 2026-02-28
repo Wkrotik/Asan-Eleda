@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from functools import lru_cache
 
@@ -7,7 +8,7 @@ from fastapi import UploadFile
 
 from app.schemas.analyze import AnalyzeResponse
 from app.schemas.common import CategoryCandidate, OcrItem, PrioritySuggestion, Warning
-from app.schemas.verify import VerifyDecision, VerifyResponse
+from app.schemas.verify import ReviewReason, VerifyDecision, VerifyResponse
 from core.config import (
     load_categories_config,
     load_pipeline_config,
@@ -21,8 +22,11 @@ from core.engines.openclip_engines import OpenClipSimilarityVerifier, OpenClipZe
 from core.engines.verify_hybrid import HybridVerifierV1
 from core.priority import RulesPrioritizerV1
 from core.storage import LocalStorage
-from core.video import extract_keyframes_ffmpeg, is_video_path
+from core.video import extract_keyframes_ffmpeg, is_video_path, probe_video_metadata
 from core.media import MediaRef
+from core.metadata import extract_image_metadata, haversine_m
+
+logger = logging.getLogger(__name__)
 
 
 class Pipeline:
@@ -38,7 +42,8 @@ class Pipeline:
         if max_mb is not None:
             try:
                 max_upload_bytes = int(float(max_mb) * 1024 * 1024)
-            except Exception:
+            except (TypeError, ValueError):
+                logger.warning("Invalid max_upload_mb config value: %s; disabling upload limit", max_mb)
                 max_upload_bytes = None
         self.storage = LocalStorage(
             uploads_dir=self.pipeline_cfg.storage.uploads_dir,
@@ -77,7 +82,13 @@ class Pipeline:
         if embedder_kind.startswith("openclip") or categorizer_kind.startswith("openclip") or verifier_kind.startswith("openclip"):
             # Lazy imports are inside engines; config toggles enable OpenCLIP.
             if categorizer_kind == "openclip_zeroshot":
-                self.categorizer = OpenClipZeroShotCategorizer()
+                cat_cfg = self.pipeline_cfg.categorization or {}
+                confidence_method = str(cat_cfg.get("confidence_method", "softmax"))
+                softmax_temperature = float(cat_cfg.get("softmax_temperature", 0.25))
+                self.categorizer = OpenClipZeroShotCategorizer(
+                    confidence_method=confidence_method,
+                    softmax_temperature=softmax_temperature,
+                )
             if verifier_kind == "openclip_similarity":
                 self.verifier = OpenClipSimilarityVerifier()
 
@@ -90,13 +101,34 @@ class Pipeline:
         request_id = uuid.uuid4().hex
         stored = await self.storage.save_upload(request_id=request_id, field="media", upload=upload)
 
+        include_gps = bool(self.pipeline_cfg.privacy.get("include_gps_evidence", True))
+        gps_round = int(self.pipeline_cfg.privacy.get("gps_round_decimals", 5))
+        meta = None
+        if stored.content_type and stored.content_type.startswith("image/"):
+            meta = extract_image_metadata(path=stored.path, gps_round_decimals=gps_round, include_gps=include_gps)
+        elif stored.content_type and stored.content_type.startswith("video/"):
+            meta = probe_video_metadata(stored.path)
+            # Optional rounding for GPS.
+            if include_gps and isinstance(meta, dict) and isinstance(meta.get("gps"), dict):
+                meta["gps"]["lat"] = round(float(meta["gps"]["lat"]), gps_round)
+                meta["gps"]["lon"] = round(float(meta["gps"]["lon"]), gps_round)
+            if not include_gps and isinstance(meta, dict):
+                meta.pop("gps", None)
+
         # Video support (MVP): extract a small number of frames and aggregate.
         media_refs: list[MediaRef] = [stored]
         if stored.content_type and stored.content_type.startswith("video/"):
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "frames"
             fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
             max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
-            extracted = extract_keyframes_ffmpeg(video_path=stored.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
+            extracted = extract_keyframes_ffmpeg(
+                video_path=stored.path,
+                out_dir=frames_dir,
+                fps=fps,
+                max_frames=max_frames,
+                min_frames=min_frames,
+            )
             media_refs = [
                 MediaRef(
                     path=f,
@@ -107,12 +139,23 @@ class Pipeline:
                 )
                 for f in extracted.frames
             ]
+            # Guard: if frame extraction fails, fall back to stored ref (ffmpeg may fail)
+            if not media_refs:
+                logger.warning("Video frame extraction yielded no frames; falling back to stored ref")
+                media_refs = [stored]
         elif is_video_path(stored.path):
             # Fallback for unknown content_type.
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "frames"
             fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
             max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
-            extracted = extract_keyframes_ffmpeg(video_path=stored.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
+            extracted = extract_keyframes_ffmpeg(
+                video_path=stored.path,
+                out_dir=frames_dir,
+                fps=fps,
+                max_frames=max_frames,
+                min_frames=min_frames,
+            )
             media_refs = [
                 MediaRef(
                     path=f,
@@ -123,13 +166,44 @@ class Pipeline:
                 )
                 for f in extracted.frames
             ]
+            # Guard: if frame extraction fails, fall back to stored ref (ffmpeg may fail)
+            if not media_refs:
+                logger.warning("Video frame extraction yielded no frames; falling back to stored ref")
+                media_refs = [stored]
 
-        # Use first frame for caption; aggregate categories by max confidence.
+        # Use first frame for caption; for video also sample OCR on multiple frames.
         description, tags = self.captioner.caption(media=media_refs[0])
 
+        # OCR: for images use first (only) ref; for videos, aggregate OCR across sampled frames.
         ocr_items: list[dict] = []
-        # OCR only on first frame for now (keeps it fast).
-        ocr_items = self.ocr.extract(media=media_refs[0])
+        ocr_per_frame: list[dict] = []
+        if len(media_refs) <= 1:
+            ocr_raw = self.ocr.extract(media=media_refs[0])
+            ocr_items = ocr_raw if isinstance(ocr_raw, list) else []
+        else:
+            # Bound compute: OCR on up to N frames spaced across the clip.
+            max_ocr_frames = int(self.pipeline_cfg.media.get("max_video_ocr_frames", 4))
+            max_ocr_frames = max(1, min(max_ocr_frames, len(media_refs)))
+            if max_ocr_frames >= len(media_refs):
+                idxs = list(range(len(media_refs)))
+            else:
+                # Evenly spaced indices including first and last.
+                step = (len(media_refs) - 1) / float(max_ocr_frames - 1) if max_ocr_frames > 1 else 0.0
+                idxs = sorted({int(round(i * step)) for i in range(max_ocr_frames)})
+            seen_text: set[str] = set()
+            for i in idxs:
+                items_raw = self.ocr.extract(media=media_refs[i])
+                items = items_raw if isinstance(items_raw, list) else []
+                ocr_per_frame.append({"frame_index": i, "frame_path": str(media_refs[i].path), "items": items})
+                for it in items:
+                    t = str(it.get("text", "")).strip()
+                    if not t:
+                        continue
+                    key = " ".join(t.lower().split())
+                    if key in seen_text:
+                        continue
+                    seen_text.add(key)
+                    ocr_items.append(it)
 
         top_k = self.pipeline_cfg.api.category_top_k
         # Aggregate category predictions across frames by max confidence per id.
@@ -146,6 +220,9 @@ class Pipeline:
                 preds, debug = dbg_out  # type: ignore[misc]
             else:
                 preds = self.categorizer.top_k(categories=self.categories_cfg.categories, top_k=top_k, media=m)
+
+            if not isinstance(preds, list):
+                preds = []
 
             per_frame.append(
                 {
@@ -165,13 +242,15 @@ class Pipeline:
 
         cats = sorted(pooled.values(), key=lambda x: float(x["confidence"]), reverse=True)[:top_k]
 
-        pr = self.prioritizer.suggest(tags=tags, text=description)
+        # Priority: include OCR text as additional signal.
+        ocr_text = " ".join([str(x.get("text", "")) for x in ocr_items if isinstance(x, dict)])
+        pr = self.prioritizer.suggest(tags=tags, text=(description + " " + ocr_text).strip())
 
         warnings: list[Warning] = []
         warnings.append(
             Warning(
                 code="taxonomy_placeholder",
-                message="Category taxonomy is a placeholder; replace config/categories.yaml with official taxonomy when available.",
+                message="Category taxonomy is a placeholder; replace config/categories.yaml (or CATEGORIES_CONFIG) with official taxonomy when available.",
             )
         )
 
@@ -179,6 +258,19 @@ class Pipeline:
             warnings.append(Warning(code="video_frame_sampling", message="Video analyzed via sampled keyframes (MVP)."))
 
         evidence: list[dict] = []
+        if meta is not None:
+            evidence.append({"type": "media_metadata", "payload": meta})
+        if ocr_per_frame:
+            evidence.append(
+                {
+                    "type": "ocr_aggregation",
+                    "payload": {
+                        "frames_used": len(ocr_per_frame),
+                        "per_frame": ocr_per_frame,
+                    },
+                }
+            )
+
         evidence.append(
             {
                 "type": "category_aggregation",
@@ -212,6 +304,32 @@ class Pipeline:
         b = await self.storage.save_upload(request_id=request_id, field="before", upload=before)
         a = await self.storage.save_upload(request_id=request_id, field="after", upload=after)
 
+        include_gps = bool(self.pipeline_cfg.privacy.get("include_gps_evidence", True))
+        gps_round = int(self.pipeline_cfg.privacy.get("gps_round_decimals", 5))
+        gps_warn_m = float(self.pipeline_cfg.privacy.get("gps_mismatch_warn_m", 250))
+
+        b_meta = None
+        a_meta = None
+        if b.content_type and b.content_type.startswith("image/"):
+            b_meta = extract_image_metadata(path=b.path, gps_round_decimals=gps_round, include_gps=include_gps)
+        elif (b.content_type and b.content_type.startswith("video/")) or is_video_path(b.path):
+            b_meta = probe_video_metadata(b.path)
+            if include_gps and isinstance(b_meta, dict) and isinstance(b_meta.get("gps"), dict):
+                b_meta["gps"]["lat"] = round(float(b_meta["gps"]["lat"]), gps_round)
+                b_meta["gps"]["lon"] = round(float(b_meta["gps"]["lon"]), gps_round)
+            if not include_gps and isinstance(b_meta, dict):
+                b_meta.pop("gps", None)
+
+        if a.content_type and a.content_type.startswith("image/"):
+            a_meta = extract_image_metadata(path=a.path, gps_round_decimals=gps_round, include_gps=include_gps)
+        elif (a.content_type and a.content_type.startswith("video/")) or is_video_path(a.path):
+            a_meta = probe_video_metadata(a.path)
+            if include_gps and isinstance(a_meta, dict) and isinstance(a_meta.get("gps"), dict):
+                a_meta["gps"]["lat"] = round(float(a_meta["gps"]["lat"]), gps_round)
+                a_meta["gps"]["lon"] = round(float(a_meta["gps"]["lon"]), gps_round)
+            if not include_gps and isinstance(a_meta, dict):
+                a_meta.pop("gps", None)
+
         # Video support: extract multiple frames and search for best-matching pair.
         b_refs: list[MediaRef] = [b]
         a_refs: list[MediaRef] = [a]
@@ -226,7 +344,8 @@ class Pipeline:
 
         if b_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "before_frames"
-            extracted = extract_keyframes_ffmpeg(video_path=b.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
+            extracted = extract_keyframes_ffmpeg(video_path=b.path, out_dir=frames_dir, fps=fps, max_frames=max_frames, min_frames=min_frames)
             if extracted.frames:
                 b_refs = [
                     MediaRef(
@@ -241,7 +360,8 @@ class Pipeline:
 
         if a_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "after_frames"
-            extracted = extract_keyframes_ffmpeg(video_path=a.path, out_dir=frames_dir, fps=fps, max_frames=max_frames)
+            min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
+            extracted = extract_keyframes_ffmpeg(video_path=a.path, out_dir=frames_dir, fps=fps, max_frames=max_frames, min_frames=min_frames)
             if extracted.frames:
                 a_refs = [
                     MediaRef(
@@ -261,27 +381,128 @@ class Pipeline:
         best_pair = (0, 0)
 
         pair_scores: list[dict] = []
-        for bi, b_ref in enumerate(b_refs):
-            for ai, a_ref in enumerate(a_refs):
-                same_ev = None
-                same_out = self.verifier.same_location(before=b_ref, after=a_ref)
-                if isinstance(same_out, tuple) and len(same_out) == 3:
-                    same_score, same_rationale, same_ev = same_out  # type: ignore[misc]
-                else:
-                    same_score, same_rationale = same_out  # type: ignore[misc]
+        pair_search_meta: dict = {"strategy": "exhaustive"}
 
-                pair_scores.append(
-                    {
-                        "before_index": bi,
-                        "after_index": ai,
-                        "score": float(same_score),
-                    }
+        total_pairs = len(b_refs) * len(a_refs)
+        is_video_case = (b_is_video or a_is_video) and total_pairs > 1
+
+        # Coarse-to-fine video pairing for HybridVerifierV1: use OpenCLIP similarity to shortlist pairs,
+        # then run expensive ORB/homography only on a capped set.
+        if is_video_case and isinstance(self.verifier, HybridVerifierV1):
+            max_evals = int(self.pipeline_cfg.media.get("max_video_pair_evals_verify", 24))
+            max_evals = max(1, min(max_evals, total_pairs))
+            tw = int(self.pipeline_cfg.media.get("video_pair_temporal_window", 2))
+            tw = max(0, tw)
+
+            # Precompute embeddings once per frame.
+            b_vecs = [self.verifier.clip_embed(media=ref) for ref in b_refs]
+            a_vecs = [self.verifier.clip_embed(media=ref) for ref in a_refs]
+
+            clip_pairs: list[dict] = []
+            for bi, bv in enumerate(b_vecs):
+                for ai, av in enumerate(a_vecs):
+                    clip_sim, clip_score = self.verifier.clip_similarity(before_vec=bv, after_vec=av)
+                    clip_pairs.append(
+                        {
+                            "before_index": bi,
+                            "after_index": ai,
+                            "clip_score": float(clip_score),
+                            "clip_sim": float(clip_sim),
+                        }
+                    )
+            clip_pairs_sorted = sorted(clip_pairs, key=lambda x: float(x.get("clip_score", 0.0)), reverse=True)
+
+            # Build a lookup dict for O(1) access to clip stats by (before_index, after_index)
+            clip_pairs_lookup: dict[tuple[int, int], dict] = {
+                (int(item["before_index"]), int(item["after_index"])): item for item in clip_pairs
+            }
+
+            candidates: list[tuple[int, int]] = []
+            seen = set()
+
+            # Add time-aligned candidates first.
+            if tw > 0:
+                m = min(len(b_refs), len(a_refs))
+                for i in range(m):
+                    for d in range(-tw, tw + 1):
+                        j = i + d
+                        if 0 <= j < len(a_refs):
+                            k = (i, j)
+                            if k in seen:
+                                continue
+                            seen.add(k)
+                            candidates.append(k)
+
+            # Fill remaining slots by best clip-only pairs.
+            for item in clip_pairs_sorted:
+                if len(candidates) >= max_evals:
+                    break
+                k = (int(item["before_index"]), int(item["after_index"]))
+                if k in seen:
+                    continue
+                seen.add(k)
+                candidates.append(k)
+
+            # Evaluate shortlisted pairs with ORB and blended score.
+            best_clip = clip_pairs_sorted[0] if clip_pairs_sorted else None
+            for (bi, ai) in candidates:
+                # O(1) lookup for cached clip stats.
+                cs = clip_pairs_lookup.get((bi, ai))
+                clip_sim = float(cs["clip_sim"]) if cs else 0.0
+                clip_score = float(cs["clip_score"]) if cs else 0.0
+                same_score, same_rationale, same_ev = self.verifier.same_location_with_clip(
+                    before=b_refs[bi],
+                    after=a_refs[ai],
+                    clip_sim=clip_sim,
+                    clip_score=clip_score,
                 )
+
+                pair_scores.append({"before_index": bi, "after_index": ai, "score": float(same_score)})
                 if float(same_score) > best_same_score:
                     best_same_score = float(same_score)
                     best_same_rationale = str(same_rationale)
                     best_same_ev = same_ev
                     best_pair = (bi, ai)
+
+            pair_search_meta = {
+                "strategy": "coarse_to_fine_clip",
+                "total_pairs": int(total_pairs),
+                "evaluated_pairs": int(len(pair_scores)),
+                "max_evals": int(max_evals),
+                "temporal_window": int(tw),
+                "clip_best_pair": {
+                    "before_index": int(best_clip["before_index"]),
+                    "after_index": int(best_clip["after_index"]),
+                    "clip_score": float(best_clip["clip_score"]),
+                }
+                if best_clip is not None
+                else None,
+                "clip_top_pairs": [
+                    {
+                        "before_index": int(x["before_index"]),
+                        "after_index": int(x["after_index"]),
+                        "clip_score": float(x["clip_score"]),
+                    }
+                    for x in clip_pairs_sorted[: min(6, len(clip_pairs_sorted))]
+                ],
+            }
+        else:
+            # Exhaustive evaluation (images or non-hybrid verifier).
+            for bi, b_ref in enumerate(b_refs):
+                for ai, a_ref in enumerate(a_refs):
+                    same_ev = None
+                    same_out = self.verifier.same_location(before=b_ref, after=a_ref)
+                    if isinstance(same_out, tuple) and len(same_out) == 3:
+                        same_score, same_rationale, same_ev = same_out  # type: ignore[misc]
+                    else:
+                        same_score, same_rationale = same_out  # type: ignore[misc]
+
+                    pair_scores.append({"before_index": bi, "after_index": ai, "score": float(same_score)})
+                    if float(same_score) > best_same_score:
+                        best_same_score = float(same_score)
+                        best_same_rationale = str(same_rationale)
+                        best_same_ev = same_ev
+                        best_pair = (bi, ai)
 
         # Choose the best-matching pair for downstream resolved heuristics.
         b_ref = b_refs[best_pair[0]]
@@ -296,8 +517,15 @@ class Pipeline:
 
         res_ev = None
         try:
-            res_out = resolved_fn(same_location_score=same_score, before=b_ref, after=a_ref)
+            res_out = resolved_fn(
+                same_location_score=same_score,
+                before=b_ref,
+                after=a_ref,
+                same_location_evidence=same_ev if isinstance(same_ev, dict) else None,
+            )
         except TypeError:
+            # Back-compat for verifiers that don't accept extra args.
+            logger.debug("Verifier does not accept extended args; using legacy signature")
             res_out = resolved_fn(same_location_score=same_score)
 
         if isinstance(res_out, tuple) and len(res_out) == 3:
@@ -331,6 +559,38 @@ class Pipeline:
                 )
             )
 
+        # If we had many possible pairs but only evaluated a few, surface a gentle warning when confidence is low.
+        if is_video_case and pair_search_meta.get("strategy") != "exhaustive" and same_score < same_warn:
+            warnings.append(
+                Warning(
+                    code="insufficient_video_evidence",
+                    message="Video verification evaluated a capped set of frame pairs; result likely needs review.",
+                )
+            )
+
+        gps_distance_m = None
+        try:
+            if include_gps and isinstance(b_meta, dict) and isinstance(a_meta, dict):
+                bg = b_meta.get("gps") if isinstance(b_meta.get("gps"), dict) else None
+                ag = a_meta.get("gps") if isinstance(a_meta.get("gps"), dict) else None
+                if isinstance(bg, dict) and isinstance(ag, dict):
+                    gps_distance_m = haversine_m(
+                        lat1=float(bg["lat"]),
+                        lon1=float(bg["lon"]),
+                        lat2=float(ag["lat"]),
+                        lon2=float(ag["lon"]),
+                    )
+                    if gps_distance_m > gps_warn_m:
+                        warnings.append(
+                            Warning(
+                                code="gps_mismatch",
+                                message=f"GPS metadata differs by ~{gps_distance_m:.0f}m; same-location may be incorrect.",
+                            )
+                        )
+        except Exception as exc:
+            logger.warning("GPS distance calculation failed: %s", exc)
+            gps_distance_m = None
+
         evidence: list[dict] = []
         # Keep evidence bounded: include basic stats and top pairs.
         pair_scores_sorted = sorted(pair_scores, key=lambda x: float(x.get("score", 0.0)), reverse=True)
@@ -351,6 +611,11 @@ class Pipeline:
                 "payload": {
                     "same_location": same_ev,
                     "resolved": res_ev,
+                    "metadata": {
+                        "before": b_meta,
+                        "after": a_meta,
+                        "gps_distance_m": gps_distance_m,
+                    },
                     "pair_search": {
                         "before_frames": [str(x.path) for x in b_refs] if len(b_refs) > 1 else [],
                         "after_frames": [str(x.path) for x in a_refs] if len(a_refs) > 1 else [],
@@ -360,6 +625,7 @@ class Pipeline:
                         "stats": stats,
                         "fps": fps if (b_is_video or a_is_video) else None,
                         "max_frames": max_frames if (b_is_video or a_is_video) else None,
+                        "search": pair_search_meta,
                     },
                     "thresholds": {
                         "same_location": {"match": same_match, "warn": same_warn},
@@ -376,6 +642,74 @@ class Pipeline:
         same_decision = "match" if same_score >= same_match else ("needs_review" if same_score >= same_warn else "mismatch")
         res_decision = "match" if res_score >= res_ok else ("needs_review" if res_score >= res_warn else "mismatch")
 
+        # Build structured review_reasons for operator clarity.
+        review_reasons: list[ReviewReason] = []
+
+        # same_location reasons
+        if same_decision == "needs_review":
+            review_reasons.append(
+                ReviewReason(
+                    code="location_needs_review",
+                    signal="same_location",
+                    detail=f"Score {same_score:.2f} is between warn ({same_warn:.2f}) and match ({same_match:.2f}) thresholds.",
+                )
+            )
+        elif same_decision == "mismatch":
+            review_reasons.append(
+                ReviewReason(
+                    code="location_mismatch",
+                    signal="same_location",
+                    detail=f"Score {same_score:.2f} is below warn threshold ({same_warn:.2f}); likely different locations.",
+                )
+            )
+
+        # resolved reasons
+        if res_decision == "needs_review":
+            review_reasons.append(
+                ReviewReason(
+                    code="resolution_needs_review",
+                    signal="resolved",
+                    detail=f"Score {res_score:.2f} is between warn ({res_warn:.2f}) and resolved ({res_ok:.2f}) thresholds.",
+                )
+            )
+        elif res_decision == "mismatch":
+            review_reasons.append(
+                ReviewReason(
+                    code="resolution_uncertain",
+                    signal="resolved",
+                    detail=f"Score {res_score:.2f} is below warn threshold ({res_warn:.2f}); issue may not be resolved.",
+                )
+            )
+
+        # GPS mismatch reason (if warning was added)
+        if gps_distance_m is not None and gps_distance_m > gps_warn_m:
+            review_reasons.append(
+                ReviewReason(
+                    code="gps_mismatch",
+                    signal="same_location",
+                    detail=f"GPS coordinates differ by ~{gps_distance_m:.0f}m (threshold: {gps_warn_m:.0f}m).",
+                )
+            )
+
+        # Video-specific reasons
+        if is_video_case and same_decision != "match":
+            if pair_search_meta.get("strategy") != "exhaustive":
+                review_reasons.append(
+                    ReviewReason(
+                        code="video_partial_search",
+                        signal="same_location",
+                        detail=f"Only {len(pair_scores)} of {total_pairs} frame pairs were evaluated (coarse-to-fine search).",
+                    )
+                )
+            if len(b_refs) * len(a_refs) > 1 and same_score < same_warn:
+                review_reasons.append(
+                    ReviewReason(
+                        code="video_no_strong_pair",
+                        signal="same_location",
+                        detail="No frame pair reached the same-location confidence threshold.",
+                    )
+                )
+
         return VerifyResponse(
             request_id=request_id,
             before={"sha256": b.sha256, "content_type": b.content_type, "original_filename": b.original_filename},
@@ -383,6 +717,7 @@ class Pipeline:
             same_location=VerifyDecision(score=same_score, decision=same_decision, rationale=same_rationale),
             resolved=VerifyDecision(score=res_score, decision=res_decision, rationale=res_rationale),
             warnings=warnings,
+            review_reasons=review_reasons,
             evidence=evidence,
         )
 

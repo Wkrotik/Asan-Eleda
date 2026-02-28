@@ -37,7 +37,10 @@ class BlipCaptioner:
 
     def caption(self, *, media: MediaRef) -> tuple[str, list[str]]:
         torch, Image, _, _ = _require_transformers()
-        im = Image.open(media.path).convert("RGB")
+        im_raw = Image.open(media.path)
+        im = im_raw.convert("RGB")
+        im.load()  # Load pixel data into memory
+        im_raw.close()  # Close the file handle
 
         inputs = self.processor(images=im, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}

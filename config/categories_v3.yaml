@@ -1,10 +1,6 @@
-# Civic Issue Taxonomy v3 (Default)
+# Civic Issue Taxonomy v3
 # Based on real-world 311 systems (NYC 311, Boston 311, FixMyStreet)
 # Categories are designed to be visually distinguishable for zero-shot image classification
-#
-# Override with CATEGORIES_CONFIG env var if needed:
-#   CATEGORIES_CONFIG=config/categories_basic_v2.yaml uvicorn app.main:app
-#
 version: 3
 
 categories:

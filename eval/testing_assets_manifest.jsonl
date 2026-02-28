@@ -1,0 +1,10 @@
+{"type":"analyze","media":"testing-assets/brokenpole.jpg","expect_category_id":"utilities"}
+{"type":"analyze","media":"testing-assets/gpsmetadata1.jpg"}
+{"type":"analyze","media":"testing-assets/gpsmetadata2.jpg"}
+{"type":"analyze","media":"testing-assets/ocr-testing.png"}
+{"type":"verify","before":"testing-assets/gpsmetadata1.jpg","after":"testing-assets/gpsmetadata1.jpg","expect_same_location":true}
+{"type":"verify","before":"testing-assets/gpsmetadata1.jpg","after":"testing-assets/gpsmetadata2.jpg","expect_same_location":false}
+{"type":"analyze","media":"testing-assets/gps_a2.mov"}
+{"type":"analyze","media":"testing-assets/test_a.mp4","expect_min_video_frames":3,"expect_ocr_aggregation":true}
+{"type":"verify","before":"testing-assets/gps_a2.mov","after":"testing-assets/gps_a2.mov","expect_same_location":true}
+{"type":"verify","before":"testing-assets/gps_a2.mov","after":"testing-assets/gps_b2.mov","expect_same_location":false,"expect_gps_mismatch":true}
