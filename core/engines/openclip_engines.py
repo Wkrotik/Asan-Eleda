@@ -164,15 +164,30 @@ class OpenClipSimilarityVerifier:
         self.pretrained = pretrained
         self.device = device
 
-    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str]:
+    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str, dict]:
         ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
         v1 = ctx.encode_image(load_image(before.path))
         v2 = ctx.encode_image(load_image(after.path))
         sim = float((v1 @ v2).item())
         score = max(0.0, min(1.0, (sim + 1.0) / 2.0))
-        return score, "Image similarity via OpenCLIP embeddings."
+        evidence = {
+            "clip": {
+                "similarity": sim,
+                "score": score,
+                "model": {"name": self.model_name, "pretrained": self.pretrained},
+            }
+        }
+        return score, "Image similarity via OpenCLIP embeddings.", evidence
 
-    def resolved(self, *, same_location_score: float) -> tuple[float, str]:
+    def resolved(
+        self,
+        *,
+        same_location_score: float,
+        before: MediaRef | None = None,
+        after: MediaRef | None = None,
+        same_location_evidence: dict | None = None,
+    ) -> tuple[float, str, dict]:
         # Still conservative: without task-specific detectors, resolution cannot be asserted strongly.
         score = max(0.0, min(1.0, same_location_score - 0.25))
-        return score, "Resolution is conservative and derived from same-location confidence (no domain detector yet)."
+        evidence = {"base_score": same_location_score}
+        return score, "Resolution is conservative and derived from same-location confidence (no domain detector yet).", evidence

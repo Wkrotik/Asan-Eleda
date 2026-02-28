@@ -29,6 +29,41 @@ from core.metadata import extract_image_metadata, haversine_m
 logger = logging.getLogger(__name__)
 
 
+def _extract_video_frames(
+    *,
+    stored: MediaRef,
+    frames_dir,
+    fps: float,
+    max_frames: int,
+    min_frames: int,
+) -> list[MediaRef]:
+    """Extract keyframes from a video and return MediaRef list.
+
+    Returns a list with the extracted frame MediaRefs, or [stored] as fallback
+    if extraction fails or yields no frames.
+    """
+    extracted = extract_keyframes_ffmpeg(
+        video_path=stored.path,
+        out_dir=frames_dir,
+        fps=fps,
+        max_frames=max_frames,
+        min_frames=min_frames,
+    )
+    if not extracted.frames:
+        logger.warning("Video frame extraction yielded no frames; falling back to stored ref")
+        return [stored]
+    return [
+        MediaRef(
+            path=f,
+            sha256=stored.sha256,
+            original_filename=stored.original_filename,
+            content_type="image/jpeg",
+            size_bytes=f.stat().st_size,
+        )
+        for f in extracted.frames
+    ]
+
+
 class Pipeline:
     def __init__(self):
         self.pipeline_cfg = load_pipeline_config()
@@ -117,59 +152,19 @@ class Pipeline:
 
         # Video support (MVP): extract a small number of frames and aggregate.
         media_refs: list[MediaRef] = [stored]
-        if stored.content_type and stored.content_type.startswith("video/"):
+        is_video = (stored.content_type and stored.content_type.startswith("video/")) or is_video_path(stored.path)
+        if is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "frames"
             fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
             max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
             min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
-            extracted = extract_keyframes_ffmpeg(
-                video_path=stored.path,
-                out_dir=frames_dir,
+            media_refs = _extract_video_frames(
+                stored=stored,
+                frames_dir=frames_dir,
                 fps=fps,
                 max_frames=max_frames,
                 min_frames=min_frames,
             )
-            media_refs = [
-                MediaRef(
-                    path=f,
-                    sha256=stored.sha256,
-                    original_filename=stored.original_filename,
-                    content_type="image/jpeg",
-                    size_bytes=f.stat().st_size,
-                )
-                for f in extracted.frames
-            ]
-            # Guard: if frame extraction fails, fall back to stored ref (ffmpeg may fail)
-            if not media_refs:
-                logger.warning("Video frame extraction yielded no frames; falling back to stored ref")
-                media_refs = [stored]
-        elif is_video_path(stored.path):
-            # Fallback for unknown content_type.
-            frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "frames"
-            fps = float(self.pipeline_cfg.media.get("video_fps", 0.5))
-            max_frames = int(self.pipeline_cfg.media.get("max_video_frames", 8))
-            min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
-            extracted = extract_keyframes_ffmpeg(
-                video_path=stored.path,
-                out_dir=frames_dir,
-                fps=fps,
-                max_frames=max_frames,
-                min_frames=min_frames,
-            )
-            media_refs = [
-                MediaRef(
-                    path=f,
-                    sha256=stored.sha256,
-                    original_filename=stored.original_filename,
-                    content_type="image/jpeg",
-                    size_bytes=f.stat().st_size,
-                )
-                for f in extracted.frames
-            ]
-            # Guard: if frame extraction fails, fall back to stored ref (ffmpeg may fail)
-            if not media_refs:
-                logger.warning("Video frame extraction yielded no frames; falling back to stored ref")
-                media_refs = [stored]
 
         # Use first frame for caption; for video also sample OCR on multiple frames.
         description, tags = self.captioner.caption(media=media_refs[0])
@@ -345,34 +340,24 @@ class Pipeline:
         if b_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "before_frames"
             min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
-            extracted = extract_keyframes_ffmpeg(video_path=b.path, out_dir=frames_dir, fps=fps, max_frames=max_frames, min_frames=min_frames)
-            if extracted.frames:
-                b_refs = [
-                    MediaRef(
-                        path=f,
-                        sha256=b.sha256,
-                        original_filename=b.original_filename,
-                        content_type="image/jpeg",
-                        size_bytes=f.stat().st_size,
-                    )
-                    for f in extracted.frames
-                ]
+            b_refs = _extract_video_frames(
+                stored=b,
+                frames_dir=frames_dir,
+                fps=fps,
+                max_frames=max_frames,
+                min_frames=min_frames,
+            )
 
         if a_is_video:
             frames_dir = self.pipeline_cfg.storage.artifacts_dir / request_id / "after_frames"
             min_frames = int(self.pipeline_cfg.media.get("min_video_frames", 0))
-            extracted = extract_keyframes_ffmpeg(video_path=a.path, out_dir=frames_dir, fps=fps, max_frames=max_frames, min_frames=min_frames)
-            if extracted.frames:
-                a_refs = [
-                    MediaRef(
-                        path=f,
-                        sha256=a.sha256,
-                        original_filename=a.original_filename,
-                        content_type="image/jpeg",
-                        size_bytes=f.stat().st_size,
-                    )
-                    for f in extracted.frames
-                ]
+            a_refs = _extract_video_frames(
+                stored=a,
+                frames_dir=frames_dir,
+                fps=fps,
+                max_frames=max_frames,
+                min_frames=min_frames,
+            )
 
         # same_location may return (score, rationale) or (score, rationale, evidence)
         best_same_score = -1.0
@@ -490,12 +475,7 @@ class Pipeline:
             # Exhaustive evaluation (images or non-hybrid verifier).
             for bi, b_ref in enumerate(b_refs):
                 for ai, a_ref in enumerate(a_refs):
-                    same_ev = None
-                    same_out = self.verifier.same_location(before=b_ref, after=a_ref)
-                    if isinstance(same_out, tuple) and len(same_out) == 3:
-                        same_score, same_rationale, same_ev = same_out  # type: ignore[misc]
-                    else:
-                        same_score, same_rationale = same_out  # type: ignore[misc]
+                    same_score, same_rationale, same_ev = self.verifier.same_location(before=b_ref, after=a_ref)
 
                     pair_scores.append({"before_index": bi, "after_index": ai, "score": float(same_score)})
                     if float(same_score) > best_same_score:
@@ -511,27 +491,13 @@ class Pipeline:
         same_rationale = best_same_rationale or "Same-location score computed from best frame pair."
         same_ev = best_same_ev
 
-        # Some verifiers use before/after for resolution heuristics.
-        # Keep compatibility with verifiers that only accept same_location_score.
-        resolved_fn = getattr(self.verifier, "resolved")
-
-        res_ev = None
-        try:
-            res_out = resolved_fn(
-                same_location_score=same_score,
-                before=b_ref,
-                after=a_ref,
-                same_location_evidence=same_ev if isinstance(same_ev, dict) else None,
-            )
-        except TypeError:
-            # Back-compat for verifiers that don't accept extra args.
-            logger.debug("Verifier does not accept extended args; using legacy signature")
-            res_out = resolved_fn(same_location_score=same_score)
-
-        if isinstance(res_out, tuple) and len(res_out) == 3:
-            res_score, res_rationale, res_ev = res_out  # type: ignore[misc]
-        else:
-            res_score, res_rationale = res_out  # type: ignore[misc]
+        # Call resolved with full signature (both verifiers now support it).
+        res_score, res_rationale, res_ev = self.verifier.resolved(
+            same_location_score=same_score,
+            before=b_ref,
+            after=a_ref,
+            same_location_evidence=same_ev if isinstance(same_ev, dict) else None,
+        )
 
         th = self.thresholds_cfg.raw.get("verify") or {}
         same_th = (th.get("same_location") or {})

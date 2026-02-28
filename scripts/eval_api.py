@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -22,11 +23,20 @@ def _read_jsonl(path: Path) -> list[dict]:
     return out
 
 
-def _post_multipart(url: str, files: dict):
-    t0 = time.time()
-    r = requests.post(url, files=files, timeout=300)
-    dt_ms = int((time.time() - t0) * 1000)
-    return r, dt_ms
+def _post_multipart(url: str, files: dict, retries: int = 2, retry_delay: float = 1.0):
+    """POST with optional retry on transient failures."""
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            t0 = time.time()
+            r = requests.post(url, files=files, timeout=300)
+            dt_ms = int((time.time() - t0) * 1000)
+            return r, dt_ms
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+            if attempt < retries:
+                time.sleep(retry_delay)
+    raise RuntimeError(f"Request failed after {retries + 1} attempts: {last_exc}")
 
 
 def _decision_is_match(decision: dict) -> bool:
@@ -53,18 +63,35 @@ def _extract_gps_distance_m(data: dict) -> float | None:
     return None
 
 
+def _latency_stats(latencies: list[int]) -> dict:
+    """Compute min/max/mean/p95 latency in ms."""
+    if not latencies:
+        return {"min_ms": None, "max_ms": None, "mean_ms": None, "p95_ms": None}
+    sorted_lats = sorted(latencies)
+    n = len(sorted_lats)
+    p95_idx = min(int(n * 0.95), n - 1)
+    return {
+        "min_ms": sorted_lats[0],
+        "max_ms": sorted_lats[-1],
+        "mean_ms": int(sum(sorted_lats) / n),
+        "p95_ms": sorted_lats[p95_idx],
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Offline evaluation harness for /analyze and /verify")
     ap.add_argument("--base-url", default="http://127.0.0.1:8000")
     ap.add_argument("--manifest", required=True, help="Path to JSONL manifest")
     ap.add_argument("--out", default="reports/eval_results.jsonl")
     ap.add_argument("--metrics-out", default="reports/metrics.json")
+    ap.add_argument("-v", "--verbose", action="store_true", help="Print progress for each case")
     args = ap.parse_args()
 
     base_url = str(args.base_url).rstrip("/")
     manifest_path = Path(args.manifest)
     out_path = Path(args.out)
     metrics_path = Path(args.metrics_out)
+    verbose = args.verbose
     out_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -83,6 +110,12 @@ def main() -> int:
     analyze_top3_correct = 0
     analyze_has_labels = 0
 
+    # Track latencies and pass/fail counts
+    analyze_latencies: list[int] = []
+    verify_latencies: list[int] = []
+    passed = 0
+    failed = 0
+
     with out_path.open("w", encoding="utf-8") as outf:
         for idx, case in enumerate(cases):
             ctype = str(case.get("type", "")).strip()
@@ -96,14 +129,21 @@ def main() -> int:
                 if not media.exists():
                     raise RuntimeError(f"Case {idx}: media not found: {media}")
 
+                if verbose:
+                    print(f"[{idx + 1}/{len(cases)}] analyze: {media.name} ...", end=" ", flush=True)
+
                 with media.open("rb") as f:
                     r, dt_ms = _post_multipart(f"{base_url}/analyze", files={"file": (media.name, f)})
 
+                analyze_latencies.append(dt_ms)
                 record["latency_ms"] = dt_ms
                 record["status_code"] = r.status_code
                 if r.status_code != 200:
                     record["error"] = r.text[:2000]
                     outf.write(json.dumps(record) + "\n")
+                    failed += 1
+                    if verbose:
+                        print(f"FAIL (HTTP {r.status_code})")
                     continue
 
                 data = r.json()
@@ -175,6 +215,15 @@ def main() -> int:
                         record.setdefault("label_mismatch", {})
                         record["label_mismatch"] = {"expect_category_id": exp_cat, "got_ids": got_ids[:3]}
 
+                if record["ok"]:
+                    passed += 1
+                    if verbose:
+                        print(f"OK ({dt_ms}ms)")
+                else:
+                    failed += 1
+                    if verbose:
+                        print(f"FAIL ({record.get('error', 'expectation failed')})")
+
                 outf.write(json.dumps(record) + "\n")
                 continue
 
@@ -186,6 +235,9 @@ def main() -> int:
             if not after.exists():
                 raise RuntimeError(f"Case {idx}: after not found: {after}")
 
+            if verbose:
+                print(f"[{idx + 1}/{len(cases)}] verify: {before.name} vs {after.name} ...", end=" ", flush=True)
+
             with before.open("rb") as fb, after.open("rb") as fa:
                 r, dt_ms = _post_multipart(
                     f"{base_url}/verify",
@@ -195,11 +247,15 @@ def main() -> int:
                     },
                 )
 
+            verify_latencies.append(dt_ms)
             record["latency_ms"] = dt_ms
             record["status_code"] = r.status_code
             if r.status_code != 200:
                 record["error"] = r.text[:2000]
                 outf.write(json.dumps(record) + "\n")
+                failed += 1
+                if verbose:
+                    print(f"FAIL (HTTP {r.status_code})")
                 continue
 
             data = r.json()
@@ -240,14 +296,29 @@ def main() -> int:
                     record["ok"] = False
                     record["error"] = "GPS expectation failed"
 
+            if record["ok"]:
+                passed += 1
+                if verbose:
+                    print(f"OK ({dt_ms}ms)")
+            else:
+                failed += 1
+                if verbose:
+                    print(f"FAIL ({record.get('error', 'expectation failed')})")
+
             outf.write(json.dumps(record) + "\n")
 
     metrics = {
+        "summary": {
+            "total_cases": len(cases),
+            "passed": passed,
+            "failed": failed,
+        },
         "analyze": {
             "total": analyze_total,
             "labeled": analyze_has_labels,
             "top1_accuracy": (analyze_top1_correct / analyze_has_labels) if analyze_has_labels else None,
             "top3_accuracy": (analyze_top3_correct / analyze_has_labels) if analyze_has_labels else None,
+            "latency": _latency_stats(analyze_latencies),
         },
         "verify": {
             "total": verify_total,
@@ -255,6 +326,7 @@ def main() -> int:
             "labeled_resolved": verify_res_labeled,
             "same_location_accuracy": (verify_same_correct / verify_same_labeled) if verify_same_labeled else None,
             "resolved_accuracy": (verify_res_correct / verify_res_labeled) if verify_res_labeled else None,
+            "latency": _latency_stats(verify_latencies),
         },
         "outputs": {
             "results_jsonl": str(out_path),
@@ -263,7 +335,22 @@ def main() -> int:
 
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
-    return 0
+
+    # Print summary to stderr for quick visibility
+    print(f"\n=== Evaluation Summary ===", file=sys.stderr)
+    print(f"Total: {len(cases)} | Passed: {passed} | Failed: {failed}", file=sys.stderr)
+    if analyze_has_labels:
+        t1 = analyze_top1_correct / analyze_has_labels * 100
+        t3 = analyze_top3_correct / analyze_has_labels * 100
+        print(f"Analyze accuracy: top1={t1:.1f}% top3={t3:.1f}% (n={analyze_has_labels})", file=sys.stderr)
+    if verify_same_labeled:
+        acc = verify_same_correct / verify_same_labeled * 100
+        print(f"Verify same_location accuracy: {acc:.1f}% (n={verify_same_labeled})", file=sys.stderr)
+    if verify_res_labeled:
+        acc = verify_res_correct / verify_res_labeled * 100
+        print(f"Verify resolved accuracy: {acc:.1f}% (n={verify_res_labeled})", file=sys.stderr)
+
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":

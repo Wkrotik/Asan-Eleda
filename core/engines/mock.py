@@ -50,7 +50,7 @@ class MockCategorizer:
 
 
 class MockVerifier:
-    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str]:
+    def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str, dict]:
         # High score if hash prefixes match.
         common = 0
         for a, b in zip(before.sha256, after.sha256):
@@ -59,10 +59,19 @@ class MockVerifier:
             common += 1
         score = min(1.0, common / 20.0)
         rationale = "Similarity estimated from deterministic embedding placeholder."
-        return score, rationale
+        evidence = {"common_prefix_chars": common, "mock": True}
+        return score, rationale, evidence
 
-    def resolved(self, *, same_location_score: float) -> tuple[float, str]:
+    def resolved(
+        self,
+        *,
+        same_location_score: float,
+        before: MediaRef | None = None,
+        after: MediaRef | None = None,
+        same_location_evidence: dict | None = None,
+    ) -> tuple[float, str, dict]:
         # Conservative: resolved score capped by same-location score.
         score = max(0.0, min(1.0, same_location_score - 0.15))
         rationale = "Resolution estimated conservatively; requires strong same-location evidence."
-        return score, rationale
+        evidence = {"base_score": same_location_score, "mock": True}
+        return score, rationale, evidence
