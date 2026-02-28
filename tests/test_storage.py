@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.storage import _safe_ext, _is_allowed_content_type
+from core.storage import _safe_ext, _is_allowed_content_type, _infer_content_type
 
 
 class TestSafeExt:
@@ -179,3 +179,62 @@ class TestIsAllowedContentType:
         """Audio files should be rejected."""
         assert _is_allowed_content_type("audio/mpeg") is False
         assert _is_allowed_content_type("audio/wav") is False
+
+
+class TestInferContentType:
+    """Tests for _infer_content_type fallback logic."""
+
+    def test_valid_provided_content_type_used(self):
+        """When valid content_type is provided, use it."""
+        assert _infer_content_type("photo.jpg", "image/jpeg") == "image/jpeg"
+        assert _infer_content_type("video.mp4", "video/mp4") == "video/mp4"
+
+    def test_infer_from_jpg_extension(self):
+        """Infer image/jpeg from .jpg extension when no content_type."""
+        assert _infer_content_type("photo.jpg", None) == "image/jpeg"
+        assert _infer_content_type("photo.JPG", None) == "image/jpeg"
+
+    def test_infer_from_png_extension(self):
+        """Infer image/png from .png extension when no content_type."""
+        assert _infer_content_type("image.png", None) == "image/png"
+
+    def test_infer_from_mp4_extension(self):
+        """Infer video/mp4 from .mp4 extension when no content_type."""
+        assert _infer_content_type("video.mp4", None) == "video/mp4"
+
+    def test_infer_from_mov_extension(self):
+        """Infer video/quicktime from .mov extension when no content_type."""
+        assert _infer_content_type("video.mov", None) == "video/quicktime"
+
+    def test_infer_when_octet_stream_provided(self):
+        """Infer from extension when application/octet-stream is provided."""
+        assert _infer_content_type("photo.jpg", "application/octet-stream") == "image/jpeg"
+        assert _infer_content_type("video.mp4", "application/octet-stream") == "video/mp4"
+
+    def test_no_filename_returns_provided(self):
+        """When no filename, return whatever was provided."""
+        assert _infer_content_type(None, "application/octet-stream") == "application/octet-stream"
+        assert _infer_content_type(None, None) is None
+
+    def test_unknown_extension_returns_provided(self):
+        """Unknown extension returns provided content_type."""
+        assert _infer_content_type("data.xyz", "application/octet-stream") == "application/octet-stream"
+
+    def test_non_media_extension_returns_provided(self):
+        """Non-media extensions (pdf, txt) don't override."""
+        # mimetypes.guess_type returns application/pdf for .pdf
+        # but _infer_content_type only uses allowed types
+        assert _infer_content_type("doc.pdf", None) is None
+        assert _infer_content_type("file.txt", "text/plain") == "text/plain"
+
+    def test_full_path_with_extension(self):
+        """Full path should work - extension is extracted."""
+        assert _infer_content_type("/home/user/photos/image.png", None) == "image/png"
+
+    def test_empty_content_type_string(self):
+        """Empty string content_type should trigger inference."""
+        assert _infer_content_type("photo.jpg", "") == "image/jpeg"
+
+    def test_whitespace_content_type(self):
+        """Whitespace-only content_type should trigger inference."""
+        assert _infer_content_type("photo.jpg", "   ") == "image/jpeg"
