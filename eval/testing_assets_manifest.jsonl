@@ -1,4 +1,8 @@
 {"type":"analyze","media":"testing-assets/brokenpole.jpg","expect_category_id":"utilities"}
+{"type":"analyze","media":"testing-assets/road1.jpg","expect_category_id":"road_problems"}
+{"type":"analyze","media":"testing-assets/fallentree.jpg","expect_category_id":"infrastructure_improvement"}
+{"type":"analyze","media":"testing-assets/sign.jpg","expect_category_id":"transport_problems"}
+{"type":"analyze","media":"testing-assets/carcrash.jpg","expect_category_id":"transport_problems"}
 {"type":"analyze","media":"testing-assets/gpsmetadata1.jpg"}
 {"type":"analyze","media":"testing-assets/gpsmetadata2.jpg"}
 {"type":"analyze","media":"testing-assets/ocr-testing.png"}

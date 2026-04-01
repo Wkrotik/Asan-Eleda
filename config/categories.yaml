@@ -1,295 +1,335 @@
-# Civic Issue Taxonomy v3 (Default)
-# Based on real-world 311 systems (NYC 311, Boston 311, FixMyStreet)
-# Categories are designed to be visually distinguishable for zero-shot image classification
+# ASAN Appeal Official Categories
+# Based on ASAN's 7 official categories for citizen appeals
+# Synonyms include detailed sub-issues for improved zero-shot classification
 #
 # Override with CATEGORIES_CONFIG env var if needed:
-#   CATEGORIES_CONFIG=config/categories_basic_v2.yaml uvicorn app.main:app
+#   CATEGORIES_CONFIG=config/categories_custom.yaml uvicorn app.main:app
 #
-version: 3
+version: 4
 
 categories:
   # ============================================================================
-  # ROADS & PAVEMENT
+  # 1. UTILITIES (Kommunal)
   # ============================================================================
-  - id: pothole
-    label: Pothole
+  - id: utilities
+    label: Utilities
+    label_az: Kommunal
     synonyms:
+      # Water issues
+      - water leak
+      - water main leak
+      - burst water pipe
+      - water pipe break
+      - water spraying from ground
+      - leaking pipe
+      - water supply problem
+      - no water supply
+      # Gas issues
+      - gas leak
+      - gas pipe problem
+      - gas supply issue
+      # Electricity issues
+      - power outage
+      - electrical problem
+      - no electricity
+      - electricity supply issue
+      - exposed electrical wires
+      - hanging cables
+      - dangerous wires
+      - electrical hazard
+      - wires hanging down
+      # Heating issues
+      - heating problem
+      - no heating
+      - central heating issue
+      # Sewage issues
+      - sewage problem
+      - sewer overflow
+      - sewage leak
+      - sewer backup
+      - sewage smell
+      # Fire hydrant
+      - fire hydrant leak
+      - leaking fire hydrant
+      - broken fire hydrant
+      - water from hydrant
+      - hydrant leak
+
+  # ============================================================================
+  # 2. ROAD PROBLEMS (Yol problemləri)
+  # ============================================================================
+  - id: road_problems
+    label: Road problems
+    label_az: Yol problemləri
+    synonyms:
+      # Potholes
+      - pothole
       - pothole in road
       - hole in road
       - road hole
-      - damaged road surface
       - road pit
-
-  - id: road_crack
-    label: Road crack or damage
-    synonyms:
+      # Road surface damage
+      - road crack
       - cracked road
       - cracked asphalt
       - road surface damage
       - broken pavement
       - road deterioration
       - asphalt damage
-
-  - id: manhole_cover
-    label: Manhole cover issue
-    synonyms:
+      - damaged road surface
+      - road damage
+      # Manhole issues
+      - manhole cover issue
       - raised manhole
       - sunken manhole
       - missing manhole cover
       - open manhole
       - manhole problem
-      - utility cover
+      - utility cover problem
+      # Curb damage
+      - damaged curb
+      - broken curb
+      - crumbling curb
+      - curb damage
+      - damaged kerb
+      # Flooding on roads
+      - flooded street
+      - flooded road
+      - standing water on road
+      - water on street
+      - ponding water
+      - waterlogged street
+      # Drainage
+      - clogged drain
+      - blocked drain
+      - clogged catch basin
+      - blocked storm drain
+      - drain blocked with debris
+      - drainage problem
+      - storm drain issue
 
-  - id: road_sign_damage
-    label: Damaged road sign
+  # ============================================================================
+  # 3. TRANSPORT PROBLEMS (Nəqliyyat problemləri)
+  # ============================================================================
+  - id: transport_problems
+    label: Transport problems
+    label_az: Nəqliyyat problemləri
     synonyms:
+      # Traffic signals
+      - traffic signal malfunction
+      - broken traffic light
+      - traffic light not working
+      - traffic signal out
+      - malfunctioning traffic light
+      - traffic light damage
+      # Road signs
+      - damaged road sign
       - broken road sign
       - bent road sign
       - missing road sign
       - fallen road sign
       - vandalized sign
       - damaged traffic sign
+      - road sign problem
+      # Parking issues
+      - illegal parking
+      - parking violation
+      - blocked parking
+      - parking problem
+      # Bus stops
+      - damaged bus stop
+      - broken bus shelter
+      - bus stop problem
+      - missing bus stop sign
+      # Abandoned vehicles
+      - abandoned vehicle
+      - abandoned car
+      - derelict vehicle
+      - left vehicle
+      - car with no plates
+      - junk car
+      # Public transport
+      - public transport issue
+      - bus problem
+      - metro problem
+      - tram problem
 
-  - id: broken_sidewalk
-    label: Broken sidewalk
+  # ============================================================================
+  # 4. INFRASTRUCTURE REPAIR (İnfrastrukturun təmiri)
+  # ============================================================================
+  - id: infrastructure_repair
+    label: Infrastructure repair
+    label_az: İnfrastrukturun təmiri
     synonyms:
+      # Sidewalk damage
+      - broken sidewalk
       - cracked sidewalk
       - damaged sidewalk
       - uneven sidewalk
       - sidewalk damage
-      - broken pavement
       - tripping hazard sidewalk
-
-  - id: sidewalk_obstruction
-    label: Sidewalk obstruction
-    synonyms:
-      - blocked sidewalk
-      - sidewalk blocked
-      - obstacle on sidewalk
-      - sidewalk barrier
-      - cannot pass sidewalk
-
-  - id: curb_damage
-    label: Damaged curb
-    synonyms:
-      - broken curb
-      - crumbling curb
-      - curb damage
-      - damaged kerb
-
-  # ============================================================================
-  # LIGHTING & SIGNALS
-  # ============================================================================
-  - id: street_light_out
-    label: Street light out
-    synonyms:
+      - sidewalk needs repair
+      # Street lighting
+      - street light out
       - broken street light
       - street lamp not working
       - dark street light
       - street light outage
       - lamp post out
       - non-functional street light
-
-  - id: damaged_light_pole
-    label: Damaged light pole
-    synonyms:
+      - damaged light pole
       - leaning light pole
       - broken lamp post
       - fallen light pole
       - bent light pole
-      - damaged lamp post
-
-  - id: traffic_signal_malfunction
-    label: Traffic signal malfunction
-    synonyms:
-      - broken traffic light
-      - traffic light not working
-      - traffic signal out
-      - malfunctioning traffic light
-      - traffic light damage
-
-  # ============================================================================
-  # WATER & DRAINAGE
-  # ============================================================================
-  - id: flooded_street
-    label: Flooded street or drain
-    synonyms:
-      - standing water
-      - flooded road
-      - water on street
-      - ponding water
-      - flood
-      - waterlogged street
-
-  - id: fire_hydrant_leak
-    label: Leaking fire hydrant
-    synonyms:
-      - fire hydrant leaking
-      - broken fire hydrant
-      - water from hydrant
-      - hydrant leak
-
-  - id: clogged_drain
-    label: Clogged storm drain
-    synonyms:
-      - blocked drain
-      - clogged catch basin
-      - blocked storm drain
-      - drain blocked with debris
-      - drainage problem
-
-  - id: water_main_leak
-    label: Water main leak
-    synonyms:
-      - water leak in street
-      - burst water pipe
-      - water main break
-      - pipe leak
-      - water spraying from ground
-
-  # ============================================================================
-  # WASTE & SANITATION
-  # ============================================================================
-  - id: overflowing_trash_bin
-    label: Overflowing trash bin
-    synonyms:
-      - full trash can
-      - overflowing garbage
-      - trash bin full
-      - garbage overflowing
-      - waste bin overflowing
-
-  - id: illegal_dumping
-    label: Illegal dumping
-    synonyms:
-      - fly tipping
-      - dumped trash
-      - unauthorized waste
-      - garbage dump
-      - dumped garbage pile
-      - illegal waste disposal
-
-  - id: litter_debris
-    label: Litter and debris
-    synonyms:
-      - scattered trash
-      - litter on street
-      - debris on road
-      - garbage on ground
-      - trash on sidewalk
-
-  - id: abandoned_furniture
-    label: Abandoned furniture or mattress
-    synonyms:
-      - dumped mattress
-      - abandoned couch
-      - discarded furniture
-      - left furniture on street
-      - bulky waste
-
-  # ============================================================================
-  # TREES & VEGETATION
-  # ============================================================================
-  - id: fallen_tree
-    label: Fallen tree or branch
-    synonyms:
-      - tree down
-      - fallen branch
-      - tree blocking road
-      - tree fell
-      - downed tree
-      - tree debris
-
-  - id: dead_tree
-    label: Dead or dying tree
-    synonyms:
-      - dead tree
-      - dying tree
-      - unhealthy tree
-      - tree needs removal
-      - hazardous tree
-
-  - id: overgrown_vegetation
-    label: Overgrown vegetation
-    synonyms:
-      - overgrown bushes
-      - overgrown plants
-      - vegetation blocking path
-      - weeds overgrown
-      - plants blocking sign
-      - needs trimming
-
-  - id: damaged_park
-    label: Damaged park or green space
-    synonyms:
-      - vandalized park
-      - park damage
-      - damaged playground
-      - broken park equipment
-      - park bench broken
-
-  # ============================================================================
-  # PROPERTY & SAFETY
-  # ============================================================================
-  - id: graffiti
-    label: Graffiti
-    synonyms:
-      - spray paint
-      - vandalism
-      - graffiti on wall
-      - graffiti on building
-      - tagged wall
-      - street art vandalism
-
-  - id: abandoned_vehicle
-    label: Abandoned vehicle
-    synonyms:
-      - abandoned car
-      - derelict vehicle
-      - left vehicle
-      - car with no plates
-      - junk car
-
-  - id: damaged_public_fixture
-    label: Damaged public fixture
-    synonyms:
+      # Public fixtures
+      - damaged public fixture
       - broken bench
-      - damaged bus stop
       - broken railing
       - damaged public furniture
       - broken fence
       - damaged barrier
-
-  - id: exposed_wiring
-    label: Exposed wiring or cables
-    synonyms:
-      - exposed electrical wires
-      - hanging cables
-      - dangerous wires
-      - electrical hazard
-      - wires hanging down
-
-  - id: construction_hazard
-    label: Construction hazard
-    synonyms:
+      - public furniture repair
+      # Building damage
+      - building damage
+      - facade damage
+      - wall damage
+      - structural damage
+      - roof damage
+      # Bridges and overpasses
+      - bridge damage
+      - overpass damage
+      - pedestrian bridge problem
+      # Construction hazards
+      - construction hazard
       - unsafe construction site
       - construction debris
       - unprotected construction
       - construction barrier missing
       - work zone hazard
 
-  - id: hazardous_spill
-    label: Hazardous spill
+  # ============================================================================
+  # 5. INFRASTRUCTURE IMPROVEMENT/LANDSCAPING (İnfrastrukturun abadlaşdırılması)
+  # ============================================================================
+  - id: infrastructure_improvement
+    label: Infrastructure improvement
+    label_az: İnfrastrukturun abadlaşdırılması
     synonyms:
+      # Parks and green spaces
+      - damaged park
+      - vandalized park
+      - park damage
+      - damaged playground
+      - broken park equipment
+      - park bench broken
+      - park improvement needed
+      - green space issue
+      # Trees and vegetation
+      - fallen tree
+      - tree down
+      - fallen branch
+      - tree blocking road
+      - tree fell
+      - downed tree
+      - tree debris
+      - dead tree
+      - dying tree
+      - unhealthy tree
+      - tree needs removal
+      - hazardous tree
+      - overgrown vegetation
+      - overgrown bushes
+      - overgrown plants
+      - vegetation blocking path
+      - weeds overgrown
+      - plants blocking sign
+      - needs trimming
+      # Landscaping
+      - landscaping problem
+      - grass needs mowing
+      - unmaintained green area
+      - flower bed damage
+      # Public spaces
+      - public space improvement
+      - square needs renovation
+      - plaza improvement
+      - pedestrian area issue
+      # Sidewalk obstruction
+      - sidewalk obstruction
+      - blocked sidewalk
+      - sidewalk blocked
+      - obstacle on sidewalk
+      - sidewalk barrier
+      - cannot pass sidewalk
+
+  # ============================================================================
+  # 6. INFRASTRUCTURE CLEANLINESS (İnfrastrukturun təmizliyi)
+  # ============================================================================
+  - id: infrastructure_cleanliness
+    label: Infrastructure cleanliness
+    label_az: İnfrastrukturun təmizliyi
+    synonyms:
+      # Trash and waste
+      - overflowing trash bin
+      - full trash can
+      - overflowing garbage
+      - trash bin full
+      - garbage overflowing
+      - waste bin overflowing
+      - trash problem
+      # Illegal dumping
+      - illegal dumping
+      - fly tipping
+      - dumped trash
+      - unauthorized waste
+      - garbage dump
+      - dumped garbage pile
+      - illegal waste disposal
+      # Litter
+      - litter and debris
+      - scattered trash
+      - litter on street
+      - debris on road
+      - garbage on ground
+      - trash on sidewalk
+      - street litter
+      # Abandoned items
+      - abandoned furniture
+      - dumped mattress
+      - abandoned couch
+      - discarded furniture
+      - left furniture on street
+      - bulky waste
+      # Graffiti
+      - graffiti
+      - spray paint
+      - vandalism
+      - graffiti on wall
+      - graffiti on building
+      - tagged wall
+      - street art vandalism
+      # Hazardous materials
+      - hazardous spill
       - oil spill
       - chemical spill
       - fuel spill on road
       - hazardous material
       - spill on street
+      # General cleanliness
+      - dirty street
+      - unclean public area
+      - needs cleaning
+      - dirty public space
 
   # ============================================================================
-  # FALLBACK
+  # 7. OTHER (Digər)
   # ============================================================================
   - id: other
     label: Other
-    synonyms: []
+    label_az: Digər
+    synonyms:
+      - other issue
+      - general complaint
+      - miscellaneous
+      - unclassified issue
+      - other problem

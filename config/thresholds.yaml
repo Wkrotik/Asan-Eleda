@@ -1,8 +1,39 @@
+# Verification Thresholds Configuration
+# 
+# These thresholds control the decision logic for image verification.
+# Values are tuned to be conservative (minimize false positives).
+#
+# Decision Logic:
+#   - score >= match_threshold -> "match" (confident positive)
+#   - warn_threshold <= score < match_threshold -> "review" (uncertain)  
+#   - score < warn_threshold -> "no_match" (confident negative)
+#
+# Edge Case Handling:
+#   - Same image: Expected score ~1.0 (perfect match)
+#   - Same location, different angle: Expected score 0.55-0.75
+#   - Same location, different lighting: Expected score 0.55-0.70
+#   - Different locations: Expected score < 0.40
+
 version: 1
+
 verify:
   same_location:
+    # Threshold for confident "match" decision
+    # Higher = more conservative (fewer false positives)
     match_threshold: 0.75
+    
+    # Threshold below which we're confident it's NOT the same location
+    # Scores between warn and match trigger "needs_review"
     warn_threshold: 0.60
+    
   resolved:
+    # Threshold for confident "resolved" decision
+    # Requires both same_location AND evidence of visual change
     resolved_threshold: 0.70
+    
+    # Threshold below which resolution is uncertain
     warn_threshold: 0.50
+
+# Hybrid Verifier Blend Weights (for reference, set in code)
+# clip_weight: 0.70  # Semantic similarity (robust to lighting/angle)
+# orb_weight: 0.30   # Geometric matching (robust to semantic changes)

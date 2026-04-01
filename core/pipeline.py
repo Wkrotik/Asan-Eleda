@@ -23,6 +23,8 @@ from core.engines.openclip_engines import OpenClipSimilarityVerifier, OpenClipZe
 from core.engines.verify_hybrid import HybridVerifierV1
 from core.priority import RulesPrioritizerV1
 from core.storage import LocalStorage
+from core.title import generate_title_from_analysis
+from core.description import enhance_description
 from core.video import extract_keyframes_ffmpeg, is_video_path, probe_video_metadata
 from core.media import MediaRef
 from core.metadata import extract_image_metadata, haversine_m
@@ -250,12 +252,7 @@ class Pipeline:
         pr = self.prioritizer.suggest(tags=tags, text=(description + " " + ocr_text).strip())
 
         warnings: list[Warning] = []
-        warnings.append(
-            Warning(
-                code="taxonomy_placeholder",
-                message="Category taxonomy is a placeholder; replace config/categories.yaml (or CATEGORIES_CONFIG) with official taxonomy when available.",
-            )
-        )
+        # Note: taxonomy_placeholder warning removed - now using official ASAN 7 categories (v4)
 
         if stored.content_type and stored.content_type.startswith("video/"):
             warnings.append(Warning(code="video_frame_sampling", message="Video analyzed via sampled keyframes (MVP)."))
@@ -285,6 +282,26 @@ class Pipeline:
             }
         )
 
+        # Generate suggested title from category and caption
+        gps_data = None
+        if meta and isinstance(meta, dict) and meta.get("gps"):
+            gps_data = meta["gps"]
+        
+        suggested_title = generate_title_from_analysis(
+            categories=cats,
+            caption=description,  # Use raw caption for title extraction
+            ocr_text=ocr_text,
+            gps=gps_data,
+        )
+
+        # Enhance description to formal appeal style
+        enhanced_description = enhance_description(
+            raw_caption=description,
+            categories=cats,
+            priority_level=pr.level,
+            ocr_items=ocr_items,
+        )
+
         return AnalyzeResponse(
             request_id=request_id,
             media={
@@ -293,7 +310,8 @@ class Pipeline:
                 "original_filename": stored.original_filename,
                 "size_bytes": stored.size_bytes,
             },
-            generated_description=description,
+            suggested_title=suggested_title,
+            generated_description=enhanced_description,
             tags=tags,
             ocr=[OcrItem(**x) for x in ocr_items],
             category_top_k=[CategoryCandidate(**x) for x in cats],

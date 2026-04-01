@@ -44,5 +44,8 @@ captioning:
   model_id: Salesforce/blip-image-captioning-base
   max_new_tokens: 40
 ocr:
-  languages: [en]
+  # Languages for OCR text extraction
+  # az = Azerbaijani (Latin script), en = English
+  # Note: Adding more languages increases model size and inference time
+  languages: [az, en]
   gpu: true
