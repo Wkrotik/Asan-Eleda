@@ -1,302 +1,255 @@
-# Asan Eleda
+# ASAN Appeal AI
 
-This repo contains the plan and implementation skeleton for an offline (on-device/on-prem) MVP for the ASAN AI Hub challenge:
-"Intelligent Analysis of Visual Content and Automated Compliance Verification".
+Offline AI system for automated analysis and verification of citizen appeals for the ASAN platform.
 
-Goal: reduce manual workload by automatically analyzing citizen-submitted images/videos, suggesting a category + priority, and verifying whether institution-provided "after" media matches the original appeal and indicates resolution.
+## Overview
 
-## What We Are Building (MVP)
+This system provides two core capabilities for the ASAN Appeal platform:
 
-Two core capabilities exposed via an API:
+1. **Analyze** - Automatically process citizen-submitted photos/videos to generate:
+   - Suggested title and description
+   - Category classification (from ASAN's 7 official categories)
+   - Priority level (High/Medium/Low)
+   - OCR text extraction (Azerbaijani + English)
 
-1) Analyze (citizen media)
-- Input: image or video
-- Output:
-  - generated textual description
-  - tags (visual concepts)
-  - OCR text snippets (if any)
-  - category prediction (top_k=3 with confidences)
-  - priority suggestion (with rationale)
-  - warnings when confidence is low or taxonomy is placeholder
+2. **Verify** - Compare "before" (citizen) and "after" (authority) images to:
+   - Confirm same location
+   - Verify issue resolution
+   - Flag cases needing human review
 
-2) Verify (before vs after)
-- Input: citizen "before" media + institution "after" media
-- Output:
-  - same-location score/decision (match vs mismatch)
-  - resolved score/decision (resolved vs needs_review)
-  - warnings when evidence is weak or contradictory
-  - evidence artifacts: signals, thresholds, frame selection (for audit/debug)
+**Key Feature:** Fully offline - no external cloud APIs. All ML models run locally on-premises.
 
-Important: Category is treated as a backend routing hint even if the UI does not show it.
-
-## Key Constraints / Assumptions
-
-- Offline-only: no external hosted AI APIs.
-- Replaceable taxonomy: we do not hardcode the official ASAN category list. We start with a placeholder taxonomy and swap it later by editing config.
-- Conservative verification: we prefer "needs_review" over false "resolved" claims.
-- GPU available: RTX 4050 Laptop (6GB VRAM). We choose model sizes that fit.
-
-## Replaceable-by-Design Architecture
-
-Core idea: stable interfaces + config-driven implementations.
-
-Pipeline calls these engines (each is swappable):
-- MediaIngestor: image/video loading, metadata, keyframes
-- Captioner: short description + tags
-- OcrExtractor: text + bounding boxes + confidence
-- Embedder: vector embeddings for matching + label similarity
-- Categorizer: label bank -> top_k=3
-- Prioritizer: rules-first -> High/Medium/Low (+ rationale)
-- Verifier:
-  - same_location_score (embedding similarity + keypoints + OCR overlap + optional GPS)
-  - resolved_score (issue-type-dependent checks when confident)
-- Storage: local filesystem now; can be swapped to object storage later
-
-### Why this structure
-
-When ASAN provides:
-- an official category taxonomy
-- institution routing mapping
-- priority definition rules
-- sample datasets
-
-...we update YAML config and (optionally) swap model backends without breaking the API or rewriting orchestration logic.
-
-## Planned Model Stack (fits 6GB VRAM)
-
-- Embeddings / zero-shot label matching: OpenCLIP ViT-B/32
-- Captioning: lightweight offline image captioner (engine is swappable)
-- OCR: EasyOCR or Tesseract (swappable)
-- Optional detection cues: YOLOv8n/s (small)
-- Video: keyframe extraction (scene cut + periodic sampling) + aggregation
-
-## API Contract (stable)
-
-`POST /analyze`
-- returns (conceptually):
-  - `generated_description: str`
-  - `tags: str[]`
-  - `ocr: {text, confidence, bbox}[]`
-  - `category_top_k: {id, label, confidence}[]` (length 3)
-  - `priority: {level, confidence, rationale}`
-   - `warnings: {code, message}[]`
-   - `evidence: {type, payload}[]`
-
-`POST /verify`
-- returns (conceptually):
-  - `same_location: {score, decision, rationale}`
-  - `resolved: {score, decision, rationale}`
-  - `warnings: {code, message}[]`
-  - `review_reasons: {code, signal, detail}[]` — structured reasons when decision is `needs_review` or `mismatch`
-  - `evidence: {type, payload}[]` (optional)
-
-Demo UI:
-- `GET /demo` serves a simple single-page UI to upload media and call the API.
-
-## Selecting A Pipeline Config
-
-Default config is `config/pipeline.yaml`.
-
-Category taxonomy config:
-- Default is `config/categories.yaml` (v3 with ~28 categories)
-- Legacy taxonomies available: `config/categories_basic_v2.yaml`, `config/categories_v3.yaml`
-- Override with `CATEGORIES_CONFIG=path/to/categories.yaml`
-
-To try a different engine mix without editing files, set `PIPELINE_CONFIG`:
+## Quick Start
 
 ```bash
-PIPELINE_CONFIG=config/pipeline.openclip.yaml uvicorn app.main:app --reload
+# 1. Install dependencies
+pip install -r requirements.txt
+pip install -r requirements-ml.txt
+
+# 2. (Optional) Pre-download model weights
+python scripts/warmup_all.py
+
+# 3. Start the server
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 4. Open demo UI
+open http://localhost:8000/demo
 ```
 
-### Categorizer Confidence Calibration
+## API Endpoints
 
-When using `openclip_zeroshot`, the category `confidence` values are calibrated via a softmax over pooled similarities.
-You can tune this in `config/pipeline.yaml` under `categorization`:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/analyze` | POST | Analyze citizen media (image/video) |
+| `/verify` | POST | Compare before/after images |
+| `/demo` | GET | Interactive demo UI |
+| `/healthz` | GET | Health check |
 
-```yaml
-categorization:
-  confidence_method: softmax
-  softmax_temperature: 0.25
+### POST /analyze
+
+Upload an image or video to get automated analysis.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8000/analyze \
+  -F "file=@pothole.jpg"
 ```
 
-Lower `softmax_temperature` makes the distribution peakier (more confident top-1), higher makes it flatter.
-
-## Config-Driven Pieces
-
-All items below are intended to be edited without code changes:
-
-- `config/categories.yaml`
-  - Default taxonomy with ~28 visually-distinguishable civic issue categories
-  - Based on real-world 311 systems (NYC 311, Boston 311, FixMyStreet)
-  - Override with `CATEGORIES_CONFIG` env var if needed
-- `config/priority_rules.yaml`
-  - rules and thresholds
-- `config/thresholds.yaml`
-  - warning thresholds for verification
-- `config/pipeline.yaml`
-  - which engine implementation to use (embedder/captioner/ocr/etc.)
-
-### Category Taxonomy
-
-The default taxonomy (`config/categories.yaml`) includes 28 categories across 6 groups:
-
-| Group | Categories |
-|-------|------------|
-| Roads & Pavement | pothole, road_crack, manhole_cover, road_sign_damage, broken_sidewalk, sidewalk_obstruction, curb_damage |
-| Lighting & Signals | street_light_out, damaged_light_pole, traffic_signal_malfunction |
-| Water & Drainage | flooded_street, fire_hydrant_leak, clogged_drain, water_main_leak |
-| Waste & Sanitation | overflowing_trash_bin, illegal_dumping, litter_debris, abandoned_furniture |
-| Trees & Vegetation | fallen_tree, dead_tree, overgrown_vegetation, damaged_park |
-| Property & Safety | graffiti, abandoned_vehicle, damaged_public_fixture, exposed_wiring, construction_hazard, hazardous_spill |
-
-Plus `other` as a fallback category.
-
-Each category includes synonyms to improve zero-shot classification accuracy.
-
-### Review Reasons (Verify Endpoint)
-
-When `/verify` returns `needs_review` or `mismatch` for either `same_location` or `resolved`, the response includes a `review_reasons` array explaining why:
-
+**Response:**
 ```json
 {
-  "same_location": { "decision": "needs_review", ... },
-  "resolved": { "decision": "needs_review", ... },
-  "review_reasons": [
-    {"code": "location_needs_review", "signal": "same_location", "detail": "Score 0.62 is between warn (0.60) and match (0.75) thresholds."},
-    {"code": "gps_mismatch", "signal": "same_location", "detail": "GPS coordinates differ by ~312m (threshold: 250m)."}
-  ]
+  "request_id": "abc123",
+  "suggested_title": "Road problems - Pothole",
+  "generated_description": "A pothole in the road surface causing damage...",
+  "tags": ["pothole", "road", "damage"],
+  "ocr": [],
+  "category_top_k": [
+    {"id": "road_problems", "label": "Road problems", "confidence": 0.85},
+    {"id": "infrastructure_repair", "label": "Infrastructure repair", "confidence": 0.10},
+    {"id": "other", "label": "Other", "confidence": 0.05}
+  ],
+  "priority": {
+    "level": "high",
+    "confidence": 0.9,
+    "rationale": "Road damage poses safety risk to vehicles"
+  },
+  "warnings": []
 }
 ```
 
-This helps operators understand exactly why a case needs human review.
+### POST /verify
 
-## Project Timeline (50 days / ~7 weeks)
+Upload before and after images to verify resolution.
 
-Week 1
-- lock response schemas + engine interfaces
-- scaffold FastAPI service, configs, storage layout
+**Request:**
+```bash
+curl -X POST http://localhost:8000/verify \
+  -F "before=@pothole_before.jpg" \
+  -F "after=@pothole_after.jpg"
+```
 
-Week 2
-- image analyze pipeline: caption/tags + OCR + embeddings
-- category v0 (placeholder taxonomy) + priority v0 (rules)
+**Response:**
+```json
+{
+  "request_id": "def456",
+  "same_location": {
+    "score": 0.92,
+    "decision": "match",
+    "rationale": "High visual similarity and geometric match"
+  },
+  "resolved": {
+    "score": 0.88,
+    "decision": "match",
+    "rationale": "Issue no longer visible in after image"
+  },
+  "warnings": [],
+  "review_reasons": []
+}
+```
 
-Week 3
-- video support: keyframes + aggregation
-- performance pass (batching, caching)
+## Categories
 
-Week 4
-- verification v1: same-location scoring + warnings
-- add conservative resolved logic (only when confident)
+The system uses ASAN's 7 official categories:
 
-Week 5
-- security basics: retention knobs, access patterns, safe logging
-- packaging docs and integration notes
+| ID | English | Azerbaijani |
+|----|---------|-------------|
+| `utilities` | Utilities | Kommunal |
+| `road_problems` | Road problems | Yol problemləri |
+| `transport_problems` | Transport problems | Nəqliyyat problemləri |
+| `infrastructure_repair` | Infrastructure repair | İnfrastrukturun təmiri |
+| `infrastructure_improvement` | Infrastructure improvement | İnfrastrukturun abadlaşdırılması |
+| `infrastructure_cleanliness` | Infrastructure cleanliness | İnfrastrukturun təmizliyi |
+| `other` | Other | Digər |
 
-Week 6
-- evaluation harness + threshold calibration
-- iterate with any provided sample dataset
+## Hardware Requirements
 
-Week 7
-- demo polish + submission pack write-up (architecture, integration, pilot plan)
-- optional Docker packaging (CPU + GPU-capable)
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| GPU | NVIDIA with 4GB VRAM | RTX 4050 (6GB VRAM) |
+| RAM | 8GB | 16GB |
+| Storage | 5GB (models) | 10GB |
+| Python | 3.11+ | 3.11.9 |
 
-## Development Setup (pyenv)
+The system can also run on CPU-only, but inference will be slower.
 
-We develop with Python 3.11.x (recommended for PyTorch/CUDA wheel compatibility).
+## Project Structure
 
-1) Install Python
+```
+├── app/                    # FastAPI application
+│   ├── main.py            # App entry point
+│   ├── routes.py          # API endpoints
+│   ├── schemas/           # Request/response models
+│   └── ui.py              # Demo UI
+├── core/                   # ML pipeline
+│   ├── pipeline.py        # Main orchestrator
+│   ├── title.py           # Title generation
+│   ├── description.py     # Description formatting
+│   └── engines/           # ML model implementations
+│       ├── caption_blip.py
+│       ├── embed_openclip.py
+│       ├── ocr_easyocr.py
+│       └── verify_hybrid.py
+├── config/                 # Configuration
+│   ├── categories.yaml    # ASAN 7 categories
+│   ├── pipeline.yaml      # Engine selection
+│   ├── priority_rules.yaml
+│   └── thresholds.yaml    # Verification thresholds
+├── scripts/               # Utilities
+│   ├── warmup_all.py      # Pre-download models
+│   ├── eval_api.py        # Evaluation harness
+│   └── profile_pipeline.py
+└── tests/                 # 180 unit tests
+```
+
+## ML Stack
+
+| Component | Model | Purpose |
+|-----------|-------|---------|
+| Captioning | BLIP | Generate image descriptions |
+| Embeddings | OpenCLIP ViT-B/32 | Zero-shot classification, similarity |
+| OCR | EasyOCR (az, en) | Text extraction |
+| Verification | CLIP + ORB | Hybrid similarity + geometric matching |
+
+All models are chosen to fit within 6GB VRAM.
+
+## Testing
 
 ```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=core --cov=app
+
+# Run specific test file
+pytest tests/test_title.py -v
+```
+
+180 unit tests covering:
+- Title generation (38 tests)
+- Description formatting (24 tests)
+- Verification edge cases (19 tests)
+- Core utilities (99 tests)
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PIPELINE_CONFIG` | Pipeline config path | `config/pipeline.yaml` |
+| `CATEGORIES_CONFIG` | Categories config path | `config/categories.yaml` |
+| `MAX_CONCURRENT_INFERENCE` | Concurrent ML operations | `2` |
+
+### Verification Thresholds
+
+Configured in `config/thresholds.yaml`:
+
+```yaml
+verification:
+  match_threshold: 0.75    # Score >= 0.75 = "match"
+  warn_threshold: 0.60     # Score 0.60-0.75 = "needs_review"
+                           # Score < 0.60 = "mismatch"
+```
+
+Conservative thresholds minimize false positives - we prefer "needs_review" over incorrect "resolved" claims.
+
+## Development Setup
+
+```bash
+# Using pyenv (recommended)
 pyenv install 3.11.9
 pyenv local 3.11.9
-python -V
-```
 
-2) Create venv
-
-```bash
+# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate
-python -V
-```
 
-3) Install dependencies
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
-
-Optional ML dependencies (OpenCLIP etc.):
-
-```bash
 pip install -r requirements-ml.txt
 ```
 
-If you want to prefetch model weights (helpful for offline demos):
+## Evaluation
+
+Run evaluation against test assets:
 
 ```bash
-python scripts/warmup_all.py
-```
-
-## Data Retention / Cleanup
-
-Uploads and derived artifacts are stored under `data/uploads/` and `data/artifacts/`.
-
-To delete old request directories (recommended for privacy), run:
-
-```bash
-python scripts/cleanup_storage.py --ttl-hours 168 --dry-run
-python scripts/cleanup_storage.py --ttl-hours 168
-```
-
-## Evaluation Harness
-
-You can evaluate the running API against a local manifest file (JSONL):
-
-```bash
+# Start server
 uvicorn app.main:app --port 8000
-python scripts/eval_api.py --manifest eval/sample_manifest.jsonl --base-url http://127.0.0.1:8000
+
+# Run evaluation
+python scripts/eval_api.py \
+  --manifest eval/testing_assets_manifest.jsonl \
+  --base-url http://127.0.0.1:8000
 ```
 
-You can also run a local-only manifest against files in `testing-assets/`:
+## License
 
-```bash
-uvicorn app.main:app --port 8000
-python scripts/eval_api.py --manifest eval/testing_assets_manifest.jsonl --base-url http://127.0.0.1:8000
-```
+Proprietary - ASAN AI Hub Challenge Submission
 
-Using the expanded basic taxonomy:
+## Documentation
 
-```bash
-CATEGORIES_CONFIG=config/categories_basic_v2.yaml uvicorn app.main:app --port 8000
-CATEGORIES_CONFIG=config/categories_basic_v2.yaml python scripts/eval_api.py --manifest eval/categories_basic_v2_manifest.jsonl --base-url http://127.0.0.1:8000
-```
-
-## Location Metadata (Optional)
-
-When available, the API includes GPS metadata (EXIF for images, ffprobe tags for videos) in `evidence` for audit/location refinement.
-This can be disabled or tuned in `config/pipeline.yaml` under `privacy`.
-
-## Delivery / Packaging
-
-We will likely ship:
-- a CPU-only Docker image (runs anywhere)
-- an optional GPU image/target (runs with NVIDIA runtime)
-
-Development does not require Docker; we add it near the end as a packaging artifact.
-
-## Documentation Sources
-
-- Challenge brief: `challange-rules/ASAN müraciət (ENG).pdf`
-- General terms: `challange-rules/Şərtlər və qaydalar.docx`
-- Email questions sent to ASAN: `docs/asan-email-questions.txt`
-
-## Open Questions (waiting on organizer response)
-
-- Official category taxonomy and/or institution routing targets
-- Priority definition criteria
-- Dataset availability (size, labels, GPS metadata)
-- Exact verification expectations (location only vs resolved)
-- Deployment constraints (CPU-only vs GPU allowed in pilot)
-
-Until then, we build with placeholder taxonomy and conservative verification decisions.
+- [API Reference](docs/API.md) - Detailed endpoint documentation
+- [Architecture](docs/ARCHITECTURE.md) - System design and ML pipeline
+- [Deployment](docs/DEPLOYMENT.md) - Installation and Docker setup
