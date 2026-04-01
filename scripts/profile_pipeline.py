@@ -23,6 +23,14 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Allow running as `python scripts/profile_pipeline.py` from the repo root.
+# (When executing a script by path, Python only adds the script directory to sys.path.)
+import sys
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 @dataclass
 class TimingResult:
