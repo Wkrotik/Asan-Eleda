@@ -96,10 +96,12 @@ def cosine_similarity(vec_a, vec_b) -> float:
     return float(dot / (na * nb))
 
 
-def build_label_texts(category: dict) -> list[str]:
+def build_label_texts(category: dict, *, use_synonyms: bool = True) -> list[str]:
     label = str(category.get("label") or category.get("id") or "")
-    syn = category.get("synonyms") or []
     texts = [label]
+    if not use_synonyms:
+        return texts
+    syn = category.get("synonyms") or []
     for s in syn:
         s = str(s).strip()
         if s and s.lower() not in {t.lower() for t in texts}:
@@ -107,14 +109,23 @@ def build_label_texts(category: dict) -> list[str]:
     return texts
 
 
-def expand_category_prompts(categories: Iterable[dict]) -> tuple[list[str], list[tuple[str, str]]]:
-    """Return (texts, mapping) where mapping[i] = (category_id, display_label)."""
+def expand_category_prompts(
+    categories: Iterable[dict], *, use_synonyms: bool = True
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Return (texts, mapping) where mapping[i] = (category_id, display_label).
+    
+    Args:
+        categories: List of category dicts with id, label, and optionally synonyms.
+        use_synonyms: If False, only use main category labels (not synonyms).
+                      This results in higher confidence scores but may reduce
+                      accuracy for edge cases.
+    """
     texts: list[str] = []
     mapping: list[tuple[str, str]] = []
     for c in categories:
         cid = str(c.get("id"))
         label = str(c.get("label", cid))
-        for t in build_label_texts(c):
+        for t in build_label_texts(c, use_synonyms=use_synonyms):
             # Simple prompt wrapper improves zero-shot stability.
             texts.append(f"a photo of {t}")
             mapping.append((cid, label))

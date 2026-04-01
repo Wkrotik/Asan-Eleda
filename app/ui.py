@@ -13,20 +13,25 @@ def render_index_html() -> str:
     <title>ASAN Appeal AI - Demo</title>
     <style>
       :root {
-        --bg: #f8fafc;
+        --bg: #f6f7f9;
         --panel: #ffffff;
-        --text: #1e293b;
-        --muted: #64748b;
-        --border: #e2e8f0;
-        --accent: #7c3aed;
-        --accent-light: #ede9fe;
-        --warn: #f59e0b;
-        --warn-light: #fef3c7;
-        --err: #ef4444;
-        --ok: #10b981;
-        --demo-banner: #fbbf24;
-        --shadow: 0 1px 3px rgba(0,0,0,0.1);
-        --radius: 8px;
+        --text: #2d3748;
+        --text-secondary: #5a6578;
+        --muted: #8492a6;
+        --border: #e8ecf1;
+        --border-light: #f0f2f5;
+        --accent: #4a6fa5;
+        --accent-soft: #e8eef6;
+        --accent-hover: #3d5d8a;
+        --success: #4a9d7c;
+        --success-soft: #e8f5ef;
+        --warn: #c08c4a;
+        --warn-soft: #faf4eb;
+        --err: #b85c5c;
+        --err-soft: #faf0f0;
+        --shadow-sm: 0 1px 2px rgba(45,55,72,0.04);
+        --shadow: 0 2px 8px rgba(45,55,72,0.06);
+        --radius: 6px;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -35,38 +40,34 @@ def render_index_html() -> str:
         min-height: 100vh;
         color: var(--text);
         background: var(--bg);
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
         font-size: 14px;
-        line-height: 1.5;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
       }
 
-      /* Demo Banner */
-      .demo-banner {
-        background: linear-gradient(90deg, var(--demo-banner), #f97316);
-        color: #000;
+      /* Demo Notice - Subtle but clear */
+      .demo-notice {
+        background: var(--warn-soft);
+        border-bottom: 1px solid #e8dfd0;
+        color: #7a6340;
         text-align: center;
-        padding: 10px 16px;
-        font-weight: 600;
-        font-size: 13px;
-        letter-spacing: 0.5px;
+        padding: 8px 16px;
+        font-size: 12px;
+        letter-spacing: 0.02em;
       }
-      .demo-banner span {
-        background: rgba(0,0,0,0.15);
-        padding: 2px 8px;
-        border-radius: 4px;
-        margin-left: 8px;
-        font-size: 11px;
-        text-transform: uppercase;
+      .demo-notice strong {
+        font-weight: 600;
       }
 
       /* Header */
       header {
         background: var(--panel);
         border-bottom: 1px solid var(--border);
-        padding: 16px 24px;
+        padding: 14px 24px;
       }
       .header-content {
-        max-width: 900px;
+        max-width: 840px;
         margin: 0 auto;
         display: flex;
         align-items: center;
@@ -77,91 +78,108 @@ def render_index_html() -> str:
       .logo {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
       }
-      .logo-icon {
-        width: 32px;
-        height: 32px;
+      .logo-mark {
+        width: 28px;
+        height: 28px;
         background: var(--accent);
-        border-radius: 8px;
+        border-radius: 6px;
         display: flex;
         align-items: center;
         justify-content: center;
         color: white;
-        font-weight: 700;
-        font-size: 14px;
-      }
-      h1 {
-        font-size: 18px;
         font-weight: 600;
+        font-size: 11px;
+        letter-spacing: -0.02em;
       }
-      .api-info {
+      .logo-text h1 {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text);
+        letter-spacing: -0.01em;
+      }
+      .logo-text p {
         font-size: 12px;
         color: var(--muted);
+        margin-top: 1px;
       }
-      .api-info code {
-        background: var(--accent-light);
-        color: var(--accent);
-        padding: 2px 6px;
+      .api-badge {
+        font-size: 11px;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .api-badge code {
+        background: var(--border-light);
+        color: var(--text-secondary);
+        padding: 3px 8px;
         border-radius: 4px;
+        font-family: "SF Mono", Monaco, Consolas, monospace;
         font-size: 11px;
       }
 
       /* Main */
       main {
-        max-width: 900px;
-        margin: 24px auto;
+        max-width: 840px;
+        margin: 20px auto 40px;
         padding: 0 24px;
       }
 
-      /* Tabs */
+      /* Tabs - Understated */
       .tabs {
         display: flex;
-        gap: 4px;
+        gap: 2px;
         margin-bottom: 16px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 0;
       }
       .tab {
         appearance: none;
         border: none;
         background: transparent;
         color: var(--muted);
-        padding: 10px 20px;
+        padding: 10px 16px;
         cursor: pointer;
         font-weight: 500;
-        font-size: 14px;
-        border-radius: var(--radius) var(--radius) 0 0;
-        transition: all 0.15s;
+        font-size: 13px;
+        position: relative;
+        transition: color 0.15s ease;
       }
       .tab:hover {
-        background: var(--panel);
-        color: var(--text);
+        color: var(--text-secondary);
       }
       .tab[aria-selected="true"] {
-        background: var(--panel);
         color: var(--accent);
-        box-shadow: var(--shadow);
+      }
+      .tab[aria-selected="true"]::after {
+        content: '';
+        position: absolute;
+        bottom: -1px;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--accent);
+        border-radius: 2px 2px 0 0;
       }
 
-      /* Card */
+      /* Card - Refined */
       .card {
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: var(--radius);
-        box-shadow: var(--shadow);
-        overflow: hidden;
+        box-shadow: var(--shadow-sm);
       }
       .card + .card {
-        margin-top: 16px;
+        margin-top: 12px;
       }
       .card-header {
         padding: 12px 16px;
-        border-bottom: 1px solid var(--border);
-        background: #fafafa;
-        font-weight: 600;
+        border-bottom: 1px solid var(--border-light);
+        font-weight: 500;
         font-size: 13px;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        color: var(--text-secondary);
       }
       .card-body {
         padding: 16px;
@@ -169,7 +187,7 @@ def render_index_html() -> str:
 
       /* Form */
       .form-group {
-        margin-bottom: 16px;
+        margin-bottom: 14px;
       }
       .form-group:last-child {
         margin-bottom: 0;
@@ -177,9 +195,9 @@ def render_index_html() -> str:
       .form-row {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 16px;
+        gap: 14px;
       }
-      @media (max-width: 600px) {
+      @media (max-width: 560px) {
         .form-row { grid-template-columns: 1fr; }
       }
       label {
@@ -187,161 +205,200 @@ def render_index_html() -> str:
         font-weight: 500;
         margin-bottom: 6px;
         font-size: 13px;
+        color: var(--text-secondary);
       }
       input[type="file"] {
         width: 100%;
         padding: 12px;
-        border: 2px dashed var(--border);
+        border: 1px dashed var(--border);
         border-radius: var(--radius);
-        background: #fafafa;
+        background: var(--bg);
         cursor: pointer;
-        transition: border-color 0.15s;
+        font-size: 13px;
+        color: var(--text-secondary);
+        transition: border-color 0.15s ease, background 0.15s ease;
       }
       input[type="file"]:hover {
         border-color: var(--accent);
+        background: var(--accent-soft);
       }
 
-      /* Buttons */
+      /* Buttons - Refined */
       .btn-row {
         display: flex;
         align-items: center;
-        gap: 12px;
-        margin-top: 16px;
+        gap: 10px;
+        margin-top: 14px;
       }
       .btn {
         appearance: none;
         border: none;
-        padding: 10px 20px;
+        padding: 9px 18px;
         border-radius: var(--radius);
-        font-weight: 600;
-        font-size: 14px;
+        font-weight: 500;
+        font-size: 13px;
         cursor: pointer;
-        transition: all 0.15s;
+        transition: all 0.15s ease;
       }
       .btn-primary {
         background: var(--accent);
         color: white;
       }
       .btn-primary:hover {
-        background: #6d28d9;
+        background: var(--accent-hover);
       }
       .btn-primary:disabled {
-        background: #a78bfa;
+        background: #a3b5cf;
         cursor: not-allowed;
       }
       .btn-secondary {
-        background: var(--border);
-        color: var(--text);
+        background: var(--border-light);
+        color: var(--text-secondary);
       }
       .btn-secondary:hover {
-        background: #cbd5e1;
+        background: var(--border);
       }
 
-      /* Status */
+      /* Status - Subtle */
       .status {
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 500;
       }
-      .status.ok { color: var(--ok); }
+      .status.ok { color: var(--success); }
       .status.err { color: var(--err); }
       .status.warn { color: var(--warn); }
       .status.loading { color: var(--accent); }
 
       /* Output */
+      .output-section {
+        margin-top: 12px;
+      }
       .output-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 12px;
+        margin-bottom: 8px;
+      }
+      .output-header span {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--muted);
       }
       pre {
         margin: 0;
-        padding: 16px;
+        padding: 14px 16px;
         overflow: auto;
-        max-height: 500px;
+        max-height: 400px;
         border-radius: var(--radius);
-        background: #1e293b;
-        color: #e2e8f0;
+        background: #2a3441;
+        color: #d4dae3;
         font-family: "SF Mono", Monaco, Consolas, monospace;
-        font-size: 12px;
-        line-height: 1.5;
+        font-size: 11px;
+        line-height: 1.6;
       }
 
-      /* Result Summary */
+      /* Result Summary - Quieter */
       .result-summary {
-        background: var(--accent-light);
-        border: 1px solid #c4b5fd;
+        background: var(--bg);
+        border: 1px solid var(--border);
         border-radius: var(--radius);
-        padding: 16px;
-        margin-bottom: 16px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
       }
       .result-summary h3 {
-        font-size: 14px;
+        font-size: 12px;
+        font-weight: 500;
         margin-bottom: 12px;
-        color: var(--accent);
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
       }
       .result-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
       }
       .result-item {
-        background: white;
+        background: var(--panel);
         padding: 10px 12px;
-        border-radius: 6px;
+        border-radius: 4px;
+        border: 1px solid var(--border-light);
       }
       .result-item .label {
-        font-size: 11px;
+        font-size: 10px;
         color: var(--muted);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.04em;
+        margin-bottom: 3px;
       }
       .result-item .value {
-        font-size: 15px;
-        font-weight: 600;
+        font-size: 14px;
+        font-weight: 500;
         color: var(--text);
-        margin-top: 2px;
       }
-      .result-item .value.match { color: var(--ok); }
+      .result-item .value.match { color: var(--success); }
       .result-item .value.no-match { color: var(--err); }
       .result-item .value.review { color: var(--warn); }
+
+      /* Description box - full width */
+      .result-description {
+        background: var(--panel);
+        padding: 12px 14px;
+        border-radius: 4px;
+        border: 1px solid var(--border-light);
+        margin-top: 10px;
+      }
+      .result-description .label {
+        font-size: 10px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 6px;
+      }
+      .result-description .value {
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--text);
+      }
 
       /* Helper text */
       .helper {
         margin-top: 12px;
         padding: 10px 12px;
-        background: #f1f5f9;
-        border-radius: 6px;
+        background: var(--bg);
+        border-radius: 4px;
         font-size: 12px;
         color: var(--muted);
+        line-height: 1.5;
       }
 
       /* Footer */
       footer {
         text-align: center;
-        padding: 24px;
+        padding: 20px 24px;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11px;
+        border-top: 1px solid var(--border-light);
+        margin-top: 32px;
       }
     </style>
   </head>
   <body>
-    <div class="demo-banner">
-      This is a demonstration interface for testing purposes only
-      <span>Not for Production</span>
+    <div class="demo-notice">
+      <strong>Demo Mode</strong> — This interface is for testing and evaluation purposes only
     </div>
 
     <header>
       <div class="header-content">
         <div class="logo">
-          <div class="logo-icon">AI</div>
-          <div>
+          <div class="logo-mark">AI</div>
+          <div class="logo-text">
             <h1>ASAN Appeal AI</h1>
-            <div class="api-info">Citizen Appeal Analysis System</div>
+            <p>Citizen Appeal Analysis System</p>
           </div>
         </div>
-        <div class="api-info">
-          API: <code id="baseUrl"></code>
+        <div class="api-badge">
+          API <code id="baseUrl"></code>
         </div>
       </div>
     </header>
@@ -362,7 +419,7 @@ def render_index_html() -> str:
           <div class="card-header">Upload Media for Analysis</div>
           <div class="card-body">
             <div class="form-group">
-              <label for="fileAnalyze">Select Image or Video</label>
+              <label for="fileAnalyze">Select image or video</label>
               <input id="fileAnalyze" type="file" accept="image/*,video/*" />
             </div>
             <div class="btn-row">
@@ -371,8 +428,8 @@ def render_index_html() -> str:
               <span class="status" id="statusA"></span>
             </div>
             <div class="helper">
-              Upload a photo or video of a civic issue. The AI will generate a title, description, 
-              category suggestion, and priority level.
+              Upload a photo or video of a civic issue. The system will generate a title, 
+              description, category suggestion, and priority level.
             </div>
           </div>
         </div>
@@ -385,11 +442,11 @@ def render_index_html() -> str:
           <div class="card-body">
             <div class="form-row">
               <div class="form-group">
-                <label for="fileBefore">Before (Original Issue)</label>
+                <label for="fileBefore">Before (original issue)</label>
                 <input id="fileBefore" type="file" accept="image/*,video/*" />
               </div>
               <div class="form-group">
-                <label for="fileAfter">After (Resolution Evidence)</label>
+                <label for="fileAfter">After (resolution evidence)</label>
                 <input id="fileAfter" type="file" accept="image/*,video/*" />
               </div>
             </div>
@@ -400,7 +457,7 @@ def render_index_html() -> str:
             </div>
             <div class="helper">
               Upload before and after images to verify if an issue has been resolved.
-              The AI checks location consistency and evidence of resolution.
+              The system checks location consistency and evidence of resolution.
             </div>
           </div>
         </div>
@@ -411,19 +468,21 @@ def render_index_html() -> str:
         <div class="card-header">Results</div>
         <div class="card-body">
           <div class="result-summary" id="resultSummary" style="display:none"></div>
-          <div class="output-header">
-            <span style="font-weight:500; color: var(--muted);">Raw JSON Response</span>
-            <button class="btn btn-secondary" id="btnCopy" style="padding: 6px 12px; font-size: 12px;">
-              Copy JSON
-            </button>
+          <div class="output-section">
+            <div class="output-header">
+              <span>JSON Response</span>
+              <button class="btn btn-secondary" id="btnCopy" style="padding: 5px 10px; font-size: 11px;">
+                Copy
+              </button>
+            </div>
+            <pre id="out"></pre>
           </div>
-          <pre id="out"></pre>
         </div>
       </div>
     </main>
 
     <footer>
-      ASAN Appeal AI Demo &middot; Offline Processing &middot; No Data Sent to External Servers
+      ASAN Appeal AI Demo · Offline Processing · No Data Sent to External Servers
     </footer>
 
     <script>
@@ -459,6 +518,7 @@ def render_index_html() -> str:
         const confidence = data.category_top_k?.[0]?.confidence;
         const confStr = confidence ? (confidence * 100).toFixed(0) + '%' : 'N/A';
         const priority = data.priority?.level || 'N/A';
+        const description = data.generated_description || 'No description generated';
         
         resultSummary.innerHTML = `
           <h3>Analysis Results</h3>
@@ -480,6 +540,10 @@ def render_index_html() -> str:
               <div class="value">${escapeHtml(priority.charAt(0).toUpperCase() + priority.slice(1))}</div>
             </div>
           </div>
+          <div class="result-description">
+            <div class="label">Generated Description</div>
+            <div class="value">${escapeHtml(description)}</div>
+          </div>
         `;
         resultSummary.style.display = '';
       }
@@ -491,31 +555,33 @@ def render_index_html() -> str:
         }
         
         const sameLoc = data.same_location?.decision || 'unknown';
-        const sameConf = data.same_location?.confidence;
+        const sameScore = data.same_location?.score;
         const resolved = data.resolved?.decision || 'unknown';
-        const resConf = data.resolved?.confidence;
+        const resScore = data.resolved?.score;
         
-        const sameClass = sameLoc === 'match' ? 'match' : sameLoc === 'no_match' ? 'no-match' : 'review';
-        const resClass = resolved === 'match' ? 'match' : resolved === 'no_match' ? 'no-match' : 'review';
+        const sameClass = sameLoc === 'match' ? 'match' : sameLoc === 'mismatch' ? 'no-match' : 'review';
+        const resClass = resolved === 'match' ? 'match' : resolved === 'mismatch' ? 'no-match' : 'review';
+        
+        const formatDecision = (d) => d === 'match' ? 'Confirmed' : d === 'mismatch' ? 'No' : 'Review Needed';
         
         resultSummary.innerHTML = `
           <h3>Verification Results</h3>
           <div class="result-grid">
             <div class="result-item">
               <div class="label">Same Location</div>
-              <div class="value ${sameClass}">${sameLoc === 'match' ? 'Yes' : sameLoc === 'no_match' ? 'No' : 'Review Needed'}</div>
+              <div class="value ${sameClass}">${formatDecision(sameLoc)}</div>
             </div>
             <div class="result-item">
-              <div class="label">Location Confidence</div>
-              <div class="value">${sameConf ? (sameConf * 100).toFixed(0) + '%' : 'N/A'}</div>
+              <div class="label">Location Score</div>
+              <div class="value">${sameScore != null ? (sameScore * 100).toFixed(0) + '%' : 'N/A'}</div>
             </div>
             <div class="result-item">
               <div class="label">Issue Resolved</div>
-              <div class="value ${resClass}">${resolved === 'match' ? 'Yes' : resolved === 'no_match' ? 'No' : 'Review Needed'}</div>
+              <div class="value ${resClass}">${formatDecision(resolved)}</div>
             </div>
             <div class="result-item">
-              <div class="label">Resolution Confidence</div>
-              <div class="value">${resConf ? (resConf * 100).toFixed(0) + '%' : 'N/A'}</div>
+              <div class="label">Resolution Score</div>
+              <div class="value">${resScore != null ? (resScore * 100).toFixed(0) + '%' : 'N/A'}</div>
             </div>
           </div>
         `;
@@ -617,8 +683,8 @@ def render_index_html() -> str:
         try {
           await navigator.clipboard.writeText(JSON.stringify(lastJson, null, 2));
           const btn = document.getElementById('btnCopy');
-          btn.textContent = 'Copied!';
-          setTimeout(() => { btn.textContent = 'Copy JSON'; }, 1500);
+          btn.textContent = 'Copied';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
         } catch (e) {
           console.error('Copy failed:', e);
         }

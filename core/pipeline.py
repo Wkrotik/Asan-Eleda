@@ -21,6 +21,7 @@ from core.engines.captioning import BlipCaptioner
 from core.engines.ocr import EasyOcrV1
 from core.engines.openclip_engines import OpenClipSimilarityVerifier, OpenClipZeroShotCategorizer
 from core.engines.verify_hybrid import HybridVerifierV1
+from core.categorize_keywords import KeywordCategorizer
 from core.priority import RulesPrioritizerV1
 from core.storage import LocalStorage
 from core.title import generate_title_from_analysis
@@ -116,6 +117,12 @@ class Pipeline:
         self.embedder = MockEmbedder()
         self.categorizer = MockCategorizer()
         self.verifier = MockVerifier()
+        self._use_keyword_categorizer = False
+
+        # Keyword-based categorizer (uses BLIP description)
+        if categorizer_kind == "keyword_v1":
+            self.categorizer = KeywordCategorizer(categories=self.categories_cfg.categories)
+            self._use_keyword_categorizer = True
 
         if embedder_kind.startswith("openclip") or categorizer_kind.startswith("openclip") or verifier_kind.startswith("openclip"):
             # Lazy imports are inside engines; config toggles enable OpenCLIP.
@@ -123,9 +130,11 @@ class Pipeline:
                 cat_cfg = self.pipeline_cfg.categorization or {}
                 confidence_method = str(cat_cfg.get("confidence_method", "softmax"))
                 softmax_temperature = float(cat_cfg.get("softmax_temperature", 0.25))
+                use_synonyms = bool(cat_cfg.get("use_synonyms", True))
                 self.categorizer = OpenClipZeroShotCategorizer(
                     confidence_method=confidence_method,
                     softmax_temperature=softmax_temperature,
+                    use_synonyms=use_synonyms,
                 )
             if verifier_kind == "openclip_similarity":
                 self.verifier = OpenClipSimilarityVerifier()
@@ -207,45 +216,58 @@ class Pipeline:
                     ocr_items.append(it)
 
         top_k = self.pipeline_cfg.api.category_top_k
-        # Aggregate category predictions across frames by max confidence per id.
-        pooled: dict[str, dict] = {}
+        # Initialize these for both categorization modes so evidence construction
+        # never references an unbound local.
         best_frame_for: dict[str, int] = {}
         per_frame: list[dict] = []
+         
+        # For keyword categorizer, use the BLIP description directly.
+        # This yields higher-confidence predictions for broad categories than
+        # image-to-abstract-label similarity.
+        keyword_debug = None
+        if self._use_keyword_categorizer:
+            cats, keyword_debug = self.categorizer.classify_with_debug(description, top_k=top_k)
+            per_frame = []  # No per-frame data for keyword categorizer
+        else:
+            # Aggregate category predictions across frames by max confidence per id.
+            pooled: dict[str, dict] = {}
+            best_frame_for = {}
+            per_frame = []
 
-        for i, m in enumerate(media_refs):
-            # If categorizer supports debug output, capture it.
-            debug = None
-            top_k_debug = getattr(self.categorizer, "top_k_debug", None)
-            if callable(top_k_debug):
-                dbg_out = await asyncio.to_thread(
-                    top_k_debug, categories=self.categories_cfg.categories, top_k=top_k, media=m
+            for i, m in enumerate(media_refs):
+                # If categorizer supports debug output, capture it.
+                debug = None
+                top_k_debug = getattr(self.categorizer, "top_k_debug", None)
+                if callable(top_k_debug):
+                    dbg_out = await asyncio.to_thread(
+                        top_k_debug, categories=self.categories_cfg.categories, top_k=top_k, media=m
+                    )
+                    preds, debug = dbg_out  # type: ignore[misc]
+                else:
+                    preds = await asyncio.to_thread(
+                        self.categorizer.top_k, categories=self.categories_cfg.categories, top_k=top_k, media=m
+                    )
+
+                if not isinstance(preds, list):
+                    preds = []
+
+                per_frame.append(
+                    {
+                        "frame_index": i,
+                        "frame_path": str(m.path),
+                        "top_k": preds,
+                        "debug": debug,
+                    }
                 )
-                preds, debug = dbg_out  # type: ignore[misc]
-            else:
-                preds = await asyncio.to_thread(
-                    self.categorizer.top_k, categories=self.categories_cfg.categories, top_k=top_k, media=m
-                )
 
-            if not isinstance(preds, list):
-                preds = []
+                for p in preds:
+                    cid = p["id"]
+                    cur = pooled.get(cid)
+                    if cur is None or float(p["confidence"]) > float(cur["confidence"]):
+                        pooled[cid] = p
+                        best_frame_for[cid] = i
 
-            per_frame.append(
-                {
-                    "frame_index": i,
-                    "frame_path": str(m.path),
-                    "top_k": preds,
-                    "debug": debug,
-                }
-            )
-
-            for p in preds:
-                cid = p["id"]
-                cur = pooled.get(cid)
-                if cur is None or float(p["confidence"]) > float(cur["confidence"]):
-                    pooled[cid] = p
-                    best_frame_for[cid] = i
-
-        cats = sorted(pooled.values(), key=lambda x: float(x["confidence"]), reverse=True)[:top_k]
+            cats = sorted(pooled.values(), key=lambda x: float(x["confidence"]), reverse=True)[:top_k]
 
         # Priority: include OCR text as additional signal.
         ocr_text = " ".join([str(x.get("text", "")) for x in ocr_items if isinstance(x, dict)])
@@ -260,6 +282,8 @@ class Pipeline:
         evidence: list[dict] = []
         if meta is not None:
             evidence.append({"type": "media_metadata", "payload": meta})
+        if keyword_debug is not None:
+            evidence.append({"type": "categorization_keyword_debug", "payload": keyword_debug})
         if ocr_per_frame:
             evidence.append(
                 {
@@ -271,16 +295,27 @@ class Pipeline:
                 }
             )
 
-        evidence.append(
-            {
-                "type": "category_aggregation",
-                "payload": {
-                    "frames_used": len(media_refs),
-                    "best_frame_for": best_frame_for,
-                    "per_frame": per_frame,
-                },
-            }
-        )
+        if self._use_keyword_categorizer:
+            evidence.append(
+                {
+                    "type": "category_aggregation",
+                    "payload": {
+                        "method": "keyword_v1",
+                        "frames_used": len(media_refs),
+                    },
+                }
+            )
+        else:
+            evidence.append(
+                {
+                    "type": "category_aggregation",
+                    "payload": {
+                        "frames_used": len(media_refs),
+                        "best_frame_for": best_frame_for,
+                        "per_frame": per_frame,
+                    },
+                }
+            )
 
         # Generate suggested title from category and caption
         gps_data = None

@@ -34,12 +34,14 @@ class OpenClipZeroShotCategorizer:
         device: str | None = None,
         confidence_method: str = "softmax",
         softmax_temperature: float = 0.25,
+        use_synonyms: bool = True,
     ):
         self.model_name = model_name
         self.pretrained = pretrained
         self.device = device
         self.confidence_method = str(confidence_method)
         self.softmax_temperature = float(softmax_temperature)
+        self.use_synonyms = use_synonyms
         self._cache_key: tuple[str, ...] | None = None
         self._text_feats = None
         self._mapping: list[tuple[str, str]] = []
@@ -68,13 +70,13 @@ class OpenClipZeroShotCategorizer:
         return out
 
     def _ensure_text_features(self, *, categories: list[dict]) -> None:
-        # Build a cache key from category IDs to avoid recomputing when categories haven't changed
-        cache_key = tuple(sorted(c.get("id", "") for c in categories))
+        # Build a cache key from category IDs and use_synonyms to avoid recomputing
+        cache_key = tuple(sorted(c.get("id", "") for c in categories)) + (str(self.use_synonyms),)
         if self._cache_key == cache_key and self._text_feats is not None and len(self._mapping) > 0:
             return  # Already cached for these categories
 
         ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
-        texts, mapping = expand_category_prompts(categories)
+        texts, mapping = expand_category_prompts(categories, use_synonyms=self.use_synonyms)
         feats = ctx.encode_texts(texts)
         self._text_feats = feats
         self._mapping = mapping

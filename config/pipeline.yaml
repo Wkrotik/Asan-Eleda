@@ -4,7 +4,7 @@ engines:
   captioner: blip_base
   ocr: easyocr_v1
   embedder: openclip_vitb32
-  categorizer: openclip_zeroshot
+  categorizer: keyword_v1
   prioritizer: rules_v1
   verifier: hybrid_v1
 storage:
@@ -22,6 +22,10 @@ categorization:
   # OpenCLIP zero-shot category confidence calibration.
   confidence_method: softmax
   softmax_temperature: 0.25
+  # Use only main category labels (not synonyms) for classification.
+  # This results in higher confidence scores since softmax is over 7 categories
+  # instead of hundreds of synonyms. May reduce accuracy for edge cases.
+  use_synonyms: false
 
 media:
   max_video_frames: 8
