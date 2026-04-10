@@ -19,3 +19,6 @@ challange-rules/
 
 .env
 .DS_Store
+
+# Generated submission artifacts
+docs/SUBMISSION.pdf
