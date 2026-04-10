@@ -125,12 +125,16 @@ The system uses ASAN's 7 official categories:
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| GPU | NVIDIA with 4GB VRAM | RTX 4050 (6GB VRAM) |
+| GPU | None (CPU-only supported, slow) | NVIDIA GPU with 6GB+ VRAM (RTX 4050 6GB proven) |
 | RAM | 8GB | 16GB |
-| Storage | 5GB (models) | 10GB |
+| Storage | 10GB (deps + model cache) | 20GB |
 | Python | 3.11+ | 3.11.9 |
 
-The system can also run on CPU-only, but inference will be slower.
+Notes:
+
+1. The full default ML pipeline (BLIP captioning + EasyOCR + OpenCLIP verification) is designed around a 6GB VRAM GPU.
+2. CPU-only runs are supported, but expect significantly slower inference, especially for video.
+3. FFmpeg is required for video keyframe extraction.
 
 ## Project Structure
 
