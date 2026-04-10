@@ -31,11 +31,9 @@ Installation, configuration, and deployment instructions for the ASAN Appeal AI 
 ### 1. Clone Repository
 
 ```bash
-git clone <repository-url>
-cd Asan-Challange
+git clone https://github.com/Wkrotik/Asan-Eleda.git
+cd Asan-Eleda
 ```
-
-Replace `<repository-url>` with the GitHub repository URL provided for the submission.
 
 ### 2. Set Up Python Environment
 
