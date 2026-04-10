@@ -1,5 +1,7 @@
 # ASAN Appeal AI (Offline) - Submission Summary
 
+GitHub repository: https://github.com/Wkrotik/Asan-Eleda
+
 ## Problem
 
 ASAN receives citizen appeals with photos/videos describing municipal issues. Manual triage is slow and inconsistent, and resolution verification (before/after) is time-consuming.
@@ -21,6 +23,15 @@ ASAN Appeal AI is an **offline, on-premises** service that automates two tasks:
    - Conservative “needs_review” path when uncertain
 
 The system runs fully offline: **no cloud APIs** and no external data transfer.
+
+## Integration Approach
+
+The solution is designed for API-based integration:
+
+1. ASAN Appeal platform uploads citizen media to `POST /analyze` to obtain structured fields (title, description, category, priority, OCR).
+2. After a responsible authority provides “after” media, ASAN Appeal calls `POST /verify` (before+after) to obtain same-location and resolved decisions.
+
+The pipeline is config-driven (`config/pipeline.yaml`) and can also be embedded as a module if ASAN prefers in-process integration.
 
 ## API
 
@@ -66,6 +77,23 @@ See `docs/ARCHITECTURE.md` for details.
 2. Uploads and artifacts are stored under `data/uploads/` and `data/artifacts/`.
 3. For privacy, stored uploads should be cleaned periodically (script: `scripts/cleanup_storage.py`).
 4. Concurrency is limited to avoid GPU OOM via `MAX_CONCURRENT_INFERENCE`.
+
+## Pilot Implementation Plan (Proposed)
+
+1. Week 1: Deploy to staging on-prem node (CPU or GPU), validate offline model caching, connect to a staging ASAN endpoint.
+2. Week 2: Run pilot on a small subset of appeals, measure categorization accuracy and verification reliability, tune thresholds/keywords.
+3. Week 3: Expand pilot volume, add monitoring/logging/cleanup schedule aligned with retention requirements.
+4. Week 4: Production hardening, documentation handoff, and rollout plan.
+
+Timeline can be shortened/expanded depending on ASAN infrastructure readiness.
+
+## Team, Experience, Legal Status
+
+Add the following to match the ASAN AI Hub application form:
+
+1. Team members: names, roles (ML/CV, backend, DevOps), contact emails.
+2. Previous experience: relevant projects in computer vision, offline/on-prem deployments, public sector integrations.
+3. Legal status: individual / company name and registration details (if applicable).
 
 ## Deployment
 
