@@ -93,12 +93,13 @@ class Pipeline:
         # Engines (MVP default is mock; can be swapped by config/pipeline.yaml)
         engines = self.pipeline_cfg.engines
 
+        cache_dir = str(self.pipeline_cfg.storage.model_cache_dir) if self.pipeline_cfg.storage.model_cache_dir else None
+
         captioner_kind = engines.get("captioner", "mock")
         ocr_kind = engines.get("ocr", "mock")
 
         self.captioner = MockCaptioner()
         if captioner_kind == "blip_base":
-            cache_dir = str(self.pipeline_cfg.storage.model_cache_dir) if self.pipeline_cfg.storage.model_cache_dir else None
             model_id = str(self.pipeline_cfg.captioning.get("model_id", "Salesforce/blip-image-captioning-base"))
             max_new_tokens = int(self.pipeline_cfg.captioning.get("max_new_tokens", 40))
             self.captioner = BlipCaptioner(model_id=model_id, max_new_tokens=max_new_tokens, cache_dir=cache_dir)
@@ -107,7 +108,6 @@ class Pipeline:
         if ocr_kind == "easyocr_v1":
             langs = list(self.pipeline_cfg.ocr.get("languages") or ["en"])
             gpu = bool(self.pipeline_cfg.ocr.get("gpu", True))
-            cache_dir = str(self.pipeline_cfg.storage.model_cache_dir) if self.pipeline_cfg.storage.model_cache_dir else None
             self.ocr = EasyOcrV1(languages=[str(x) for x in langs], gpu=gpu, model_storage_directory=cache_dir)
 
         embedder_kind = engines.get("embedder", "mock")
@@ -135,12 +135,13 @@ class Pipeline:
                     confidence_method=confidence_method,
                     softmax_temperature=softmax_temperature,
                     use_synonyms=use_synonyms,
+                    cache_dir=cache_dir,
                 )
             if verifier_kind == "openclip_similarity":
-                self.verifier = OpenClipSimilarityVerifier()
+                self.verifier = OpenClipSimilarityVerifier(cache_dir=cache_dir)
 
         if verifier_kind == "hybrid_v1":
-            self.verifier = HybridVerifierV1()
+            self.verifier = HybridVerifierV1(cache_dir=cache_dir)
 
         self.prioritizer = RulesPrioritizerV1(self.priority_rules_cfg.raw)
 

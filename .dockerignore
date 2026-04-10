@@ -1,0 +1,19 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data (mounted as a volume)
+data/
+reports/
+
+# Large test assets
+testing-assets/
+
+# OS/editor
+.DS_Store
+Thumbs.db

@@ -17,9 +17,10 @@ class OpenClipEmbedder:
     model_name: str = "ViT-B-32"
     pretrained: str = "laion2b_s34b_b79k"
     device: str | None = None
+    cache_dir: str | None = None
 
     def embed(self, *, media: MediaRef) -> list[float]:
-        ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
+        ctx = get_openclip_context(self.model_name, self.pretrained, self.device, cache_dir=self.cache_dir)
         im = load_image(media.path)
         vec = ctx.encode_image(im)
         return [float(x) for x in vec.tolist()]
@@ -32,6 +33,7 @@ class OpenClipZeroShotCategorizer:
         model_name: str = "ViT-B-32",
         pretrained: str = "laion2b_s34b_b79k",
         device: str | None = None,
+        cache_dir: str | None = None,
         confidence_method: str = "softmax",
         softmax_temperature: float = 0.25,
         use_synonyms: bool = True,
@@ -39,6 +41,7 @@ class OpenClipZeroShotCategorizer:
         self.model_name = model_name
         self.pretrained = pretrained
         self.device = device
+        self.cache_dir = cache_dir
         self.confidence_method = str(confidence_method)
         self.softmax_temperature = float(softmax_temperature)
         self.use_synonyms = use_synonyms
@@ -75,7 +78,7 @@ class OpenClipZeroShotCategorizer:
         if self._cache_key == cache_key and self._text_feats is not None and len(self._mapping) > 0:
             return  # Already cached for these categories
 
-        ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
+        ctx = get_openclip_context(self.model_name, self.pretrained, self.device, cache_dir=self.cache_dir)
         texts, mapping = expand_category_prompts(categories, use_synonyms=self.use_synonyms)
         feats = ctx.encode_texts(texts)
         self._text_feats = feats
@@ -88,7 +91,7 @@ class OpenClipZeroShotCategorizer:
             return []
         self._ensure_text_features(categories=categories)
 
-        ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
+        ctx = get_openclip_context(self.model_name, self.pretrained, self.device, cache_dir=self.cache_dir)
         im = load_image(media.path)
         img_feat = ctx.encode_image(im)
 
@@ -117,7 +120,7 @@ class OpenClipZeroShotCategorizer:
             return [], {"prompts": [], "per_category": {}}
         self._ensure_text_features(categories=categories)
 
-        ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
+        ctx = get_openclip_context(self.model_name, self.pretrained, self.device, cache_dir=self.cache_dir)
         im = load_image(media.path)
         img_feat = ctx.encode_image(im)
 
@@ -161,13 +164,21 @@ class OpenClipZeroShotCategorizer:
 
 
 class OpenClipSimilarityVerifier:
-    def __init__(self, *, model_name: str = "ViT-B-32", pretrained: str = "laion2b_s34b_b79k", device: str | None = None):
+    def __init__(
+        self,
+        *,
+        model_name: str = "ViT-B-32",
+        pretrained: str = "laion2b_s34b_b79k",
+        device: str | None = None,
+        cache_dir: str | None = None,
+    ):
         self.model_name = model_name
         self.pretrained = pretrained
         self.device = device
+        self.cache_dir = cache_dir
 
     def same_location(self, *, before: MediaRef, after: MediaRef) -> tuple[float, str, dict]:
-        ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
+        ctx = get_openclip_context(self.model_name, self.pretrained, self.device, cache_dir=self.cache_dir)
         v1 = ctx.encode_image(load_image(before.path))
         v2 = ctx.encode_image(load_image(after.path))
         sim = float((v1 @ v2).item())

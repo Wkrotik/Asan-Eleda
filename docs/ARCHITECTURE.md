@@ -40,7 +40,10 @@ Engines are selected via YAML configuration, not hardcoded:
 engines:
   captioner: blip_base      # Can swap to: mock, other_model
   ocr: easyocr_v1           # Can swap to: tesseract, mock
-  categorizer: openclip_zeroshot
+  # Categorizer options:
+  # - keyword_v1: classify from BLIP caption using weighted keyword matching (recommended)
+  # - openclip_zeroshot: classic CLIP image-to-label zero-shot
+  categorizer: keyword_v1
   verifier: hybrid_v1
 ```
 
@@ -109,19 +112,42 @@ Used for:
 - Zero-shot category classification
 - Before/after image similarity
 
-### 5. Categorizer (Zero-Shot CLIP)
+### 5. Categorizer
+
+The pipeline supports two categorization strategies:
+
+1. **keyword_v1 (default)**
+Uses the BLIP-generated caption (text) and assigns categories via weighted keyword matching.
+This produces higher and more stable confidences when the taxonomy is small and abstract (ASAN's 7 categories).
+
+2. **openclip_zeroshot (optional)**
+Classic CLIP-style zero-shot by comparing image embeddings to category label embeddings.
+
+#### keyword_v1
+
+**Method:**
+
+1. Caption image with BLIP (e.g. "a telephone pole")
+2. Normalize text and match against category-specific keyword sets
+3. Convert match scores to probabilities via softmax (temperature-controlled)
+4. Return top-k categories
+
+This is implemented in `core/categorize_keywords.py` and wired in `core/pipeline.py` when `engines.categorizer: keyword_v1`.
+
+#### openclip_zeroshot
 
 **Method:** Compare image embedding to category label embeddings.
 
 ```python
-categories = ["pothole", "graffiti", "fallen tree", ...]
+categories = ["Utilities", "Road problems", "Transport problems", ...]
 similarities = cosine_similarity(image_embedding, text_embeddings)
 top_k = sorted(similarities)[:3]
 ```
 
 **Confidence Calibration:**
-- Softmax over similarities with temperature=0.25
-- Lower temperature → more confident top-1 predictions
+
+- Softmax over similarities with temperature configured in `config/pipeline.yaml` (`categorization.softmax_temperature`)
+- Lower temperature -> more confident top-1 predictions
 
 ### 6. Title Generator
 
@@ -209,7 +235,7 @@ same_location_score = 0.7 * clip_similarity + 0.3 * orb_match_score
 | File | Purpose |
 |------|---------|
 | `config/pipeline.yaml` | Engine selection, storage paths |
-| `config/categories.yaml` | Category taxonomy with synonyms |
+| `config/categories.yaml` | Category taxonomy (ASAN 7 official categories) |
 | `config/priority_rules.yaml` | Priority rule definitions |
 | `config/thresholds.yaml` | Verification score thresholds |
 

@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: asan-appeal-ai:cpu
+    ports:
+      - "8000:8000"
+    environment:
+      PIPELINE_CONFIG: config/pipeline.yaml
+      CATEGORIES_CONFIG: config/categories.yaml
+      MAX_CONCURRENT_INFERENCE: "2"
+    volumes:
+      - ./data:/app/data
+
+# For GPU, switch to:
+#   dockerfile: Dockerfile.gpu
+#   image: asan-appeal-ai:gpu
+# and run with:
+#   docker compose up --build

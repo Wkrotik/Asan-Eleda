@@ -35,6 +35,8 @@ git clone <repository-url>
 cd Asan-Challange
 ```
 
+Replace `<repository-url>` with the GitHub repository URL provided for the submission.
+
 ### 2. Set Up Python Environment
 
 Using pyenv (recommended):
@@ -157,19 +159,26 @@ ocr:
 
 ## Docker Deployment
 
-> **Note:** Docker images will be provided before final submission.
+This repository includes Dockerfiles for both CPU and GPU deployments.
 
-### Quick Start (Coming Soon)
+### Quick Start
 
 ```bash
 # CPU-only
-docker run -p 8000:8000 asan-appeal-ai:cpu
+docker build -t asan-appeal-ai:cpu -f Dockerfile.cpu .
+docker run --rm -p 8000:8000 \
+  -v "$PWD/data:/app/data" \
+  asan-appeal-ai:cpu
 
 # With GPU
-docker run --gpus all -p 8000:8000 asan-appeal-ai:gpu
+docker build -t asan-appeal-ai:gpu -f Dockerfile.gpu .
+docker run --rm --gpus all -p 8000:8000 \
+  -e CUDA_VISIBLE_DEVICES=0 \
+  -v "$PWD/data:/app/data" \
+  asan-appeal-ai:gpu
 ```
 
-### Docker Compose (Coming Soon)
+### Docker Compose
 
 ```yaml
 version: '3.8'
@@ -189,7 +198,7 @@ services:
               capabilities: [gpu]
 ```
 
-### Building Docker Images (Coming Soon)
+### Building Docker Images
 
 ```bash
 # CPU image

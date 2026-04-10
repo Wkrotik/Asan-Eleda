@@ -100,9 +100,10 @@ class HybridVerifierV1:
     model_name: str = "ViT-B-32"
     pretrained: str = "laion2b_s34b_b79k"
     device: str | None = None
+    cache_dir: str | None = None
 
     def clip_embed(self, *, media: MediaRef):
-        ctx = get_openclip_context(self.model_name, self.pretrained, self.device)
+        ctx = get_openclip_context(self.model_name, self.pretrained, self.device, cache_dir=self.cache_dir)
         return ctx.encode_image(load_image(media.path))
 
     @staticmethod

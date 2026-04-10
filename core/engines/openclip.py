@@ -22,10 +22,20 @@ class OpenClipContext:
     model_name: str
     pretrained: str
     device: str
+    cache_dir: str | None = None
+    pretrained_hf: bool = True
 
     def __post_init__(self) -> None:
         open_clip, torch, _ = _require_openclip()
-        model, _, preprocess = open_clip.create_model_and_transforms(self.model_name, pretrained=self.pretrained)
+
+        # Ensure model artifacts can be stored in a controlled cache directory
+        # (important for offline/on-prem deployments).
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            self.model_name,
+            pretrained=self.pretrained,
+            cache_dir=self.cache_dir,
+            pretrained_hf=bool(self.pretrained_hf),
+        )
         model.eval()
         self._torch = torch
         self._open_clip = open_clip
@@ -64,11 +74,13 @@ def get_openclip_context(
     cache_dir: str | None = None,
 ) -> OpenClipContext:
     # We create the context with a model already loaded; open_clip handles caching.
-    # cache_dir is passed through via OpenClipContext post-init by re-calling create_model...
-    ctx = OpenClipContext(model_name=model_name, pretrained=pretrained, device=device or _default_device())
-    # NOTE: open_clip.create_model_and_transforms supports cache_dir, but OpenClipContext currently
-    # uses defaults. We keep cache prefetch in scripts/warmup_openclip.py.
-    _ = cache_dir
+    ctx = OpenClipContext(
+        model_name=model_name,
+        pretrained=pretrained,
+        device=device or _default_device(),
+        cache_dir=cache_dir,
+        pretrained_hf=True,
+    )
     return ctx
 
 

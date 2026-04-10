@@ -145,9 +145,9 @@ The system can also run on CPU-only, but inference will be slower.
 │   ├── title.py           # Title generation
 │   ├── description.py     # Description formatting
 │   └── engines/           # ML model implementations
-│       ├── caption_blip.py
-│       ├── embed_openclip.py
-│       ├── ocr_easyocr.py
+│       ├── captioning.py
+│       ├── openclip.py
+│       ├── ocr.py
 │       └── verify_hybrid.py
 ├── config/                 # Configuration
 │   ├── categories.yaml    # ASAN 7 categories
@@ -171,6 +171,11 @@ The system can also run on CPU-only, but inference will be slower.
 | Verification | CLIP + ORB | Hybrid similarity + geometric matching |
 
 All models are chosen to fit within 6GB VRAM.
+
+## Deployment
+
+1. Native: use the Quick Start instructions above.
+2. Docker and production notes: see `docs/DEPLOYMENT.md`.
 
 ## Testing
 

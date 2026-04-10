@@ -1,0 +1,44 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# System deps
+# - python3.11 + pip
+# - ffmpeg: video keyframe extraction
+# - libgl1/libgomp1: opencv runtime deps
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    ffmpeg \
+    libgl1 \
+    libgomp1 \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN python3.11 -m pip install --no-cache-dir --upgrade pip
+
+COPY requirements.txt requirements-ml.txt ./
+
+# CUDA PyTorch wheels. Note: needs NVIDIA driver on host.
+RUN python3.11 -m pip install --no-cache-dir -r requirements.txt \
+  && python3.11 -m pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    --extra-index-url https://pypi.org/simple \
+    -r requirements-ml.txt
+
+COPY . .
+
+ENV PIPELINE_CONFIG=config/pipeline.yaml \
+    CATEGORIES_CONFIG=config/categories.yaml \
+    MAX_CONCURRENT_INFERENCE=1 \
+    CUDA_VISIBLE_DEVICES=0
+
+EXPOSE 8000
+
+CMD ["python3.11", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
